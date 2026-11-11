@@ -6,14 +6,13 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QListWidget)
 from PyQt5.QtCore import Qt, QDate
 import database as db
-from ocr_service import extract_text, parse_receipt
+from ocr_service import extract_text, extract_text_from_pdf, parse_receipt
 import os
 import tempfile
 import logging
 import re
 
 logger = logging.getLogger(__name__)
-
 
 class ScanDialog(QDialog):
     """Диалог сканирования чека с OCR."""
@@ -181,47 +180,47 @@ class ScanDialog(QDialog):
         """Визуальный редактор для ручной разметки позиций."""
         text = self.txt.toPlainText()
         lines = text.split('\n')
-        
+
         # Создаём диалог для выбора строк
         dlg = QDialog(self)
         dlg.setWindowTitle("Выберите строки с позициями")
         dlg.resize(600, 400)
-        
+
         lay = QVBoxLayout(dlg)
         lay.addWidget(QLabel("Отметьте строки, которые содержат позиции (Ctrl+Click для множественного выбора):"))
-        
+
         list_widget = QListWidget()
         list_widget.setSelectionMode(QListWidget.MultiSelection)
-        
+
         for i, line in enumerate(lines):
             if line.strip():
                 list_widget.addItem(f"{i}: {line}")
-        
+
         lay.addWidget(list_widget)
-        
+
         btn_lay = QHBoxLayout()
         b_ok = QPushButton("OK")
         b_cancel = QPushButton("Отмена")
         btn_lay.addWidget(b_ok)
         btn_lay.addWidget(b_cancel)
         lay.addLayout(btn_lay)
-        
+
         def on_ok():
             selected_items = list_widget.selectedItems()
             for item in selected_items:
                 line_text = item.text().split(': ', 1)[1] if ': ' in item.text() else item.text()
-                
+
                 # Парсим выбранную строку
                 numbers = self._find_all_numbers_in_line(line_text)
                 if len(numbers) >= 2:
                     qty = numbers[-2]['value']
                     total = numbers[-1]['value']
-                    
+
                     if self._is_likely_quantity(qty) and self._is_likely_price(total):
                         name_end = numbers[0]['start']
                         name = line_text[:name_end].strip()
                         name = re.sub(r'[^\w\s\-]', '', name).strip()
-                        
+
                         if len(name) >= 3:
                             price = total / qty if qty > 0 else 0
                             # Добавляем в таблицу
@@ -229,7 +228,7 @@ class ScanDialog(QDialog):
                             self.tbl.insertRow(r)
                             self.tbl.setItem(r, 0, QTableWidgetItem(str(r + 1)))
                             self.tbl.item(r, 0).setFlags(Qt.ItemIsEnabled)
-                            
+
                             cb = QComboBox()
                             cb.setEditable(True)
                             cb.addItem(name)
@@ -237,24 +236,24 @@ class ScanDialog(QDialog):
                                 cb.addItem(n["name"])
                             cb.setEditText(name)
                             self.tbl.setCellWidget(r, 1, cb)
-                            
+
                             self.tbl.setItem(r, 2, QTableWidgetItem(str(qty)))
                             self.tbl.setItem(r, 3, QTableWidgetItem(f"{price:.2f}"))
                             self.tbl.setItem(r, 4, QTableWidgetItem(f"{total:.2f}"))
                             self.tbl.item(r, 4).setFlags(Qt.ItemIsEnabled)
-                            
+
                             cb_payer = QComboBox()
                             cb_payer.addItem("—", None)
                             for p in db.fetch_all("payers"):
                                 cb_payer.addItem(p["name"], p["id"])
                             self.tbl.setCellWidget(r, 5, cb_payer)
-            
+
             self._update_total()
             dlg.accept()
-        
+
         b_ok.clicked.connect(on_ok)
         b_cancel.clicked.connect(dlg.reject)
-        
+
         dlg.exec_()
 
     def _find_all_numbers_in_line(self, line):
@@ -276,7 +275,7 @@ class ScanDialog(QDialog):
         if not s:
             return None
         s = str(s).strip()
-        
+
         replacements = {
             "'": "7", "`": "7", "´": "7",
             "l": "1", "I": "1", "|": "1", "i": "1",
@@ -302,25 +301,26 @@ class ScanDialog(QDialog):
             "B": "8", "b": "8",
             "~": "", "+": "",
         }
-        
+
         for old, new in replacements.items():
             s = s.replace(old, new)
-        
+
         s = re.sub(r'[^\d.,]', '', s)
         s = s.replace(',', '.')
-        
+
         if s.count('.') > 1:
             parts = s.split('.')
             s = ''.join(parts[:-1]) + '.' + parts[-1]
-        
+
         try:
             return float(s)
         except:
             return None
 
     def _is_likely_quantity(self, num):
-        """Проверить, похоже ли число на количество."""
-        return 0 < num <= 10 and (num == int(num) or abs(num - round(num, 1)) < 0.01)
+        """Проверить, похоже ли число на количество.
+        ИСПРАВЛЕНО: допускаются весовые количества (0.658 кг) и большие (13 шт)."""
+        return 0 < num <= 1000
 
     def _is_likely_price(self, num):
         """Проверить, похоже ли число на цену/сумму."""
@@ -369,30 +369,44 @@ class ScanDialog(QDialog):
 
         try:
             text = ""
+            from_text_layer = False
 
             if path.lower().endswith('.pdf'):
-                from pdf2image import convert_from_path
-                images = convert_from_path(path, dpi=300)
-                if images:
-                    temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                    images[0].save(temp_file.name, 'PNG')
-                    text = extract_text(temp_file.name)
-                    os.unlink(temp_file.name)
+                # 1) Электронный чек: берём точный текстовый слой, OCR не нужен
+                text = extract_text_from_pdf(path) or ""
+                if text:
+                    from_text_layer = True
+                    logger.info("PDF содержит текстовый слой — OCR не требуется")
                 else:
-                    QMessageBox.critical(
-                        self, "Ошибка", "Не удалось извлечь изображение из PDF"
-                    )
-                    return
+                    # 2) Скан без текстового слоя: рендерим ВСЕ страницы и распознаём
+                    from pdf2image import convert_from_path
+                    images = convert_from_path(path, dpi=300)
+                    if not images:
+                        QMessageBox.critical(
+                            self, "Ошибка", "Не удалось извлечь изображение из PDF"
+                        )
+                        return
+                    parts = []
+                    for n, img in enumerate(images, 1):
+                        logger.info(f"OCR страницы {n}/{len(images)}")
+                        temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                        try:
+                            img.save(temp_file.name, 'PNG')
+                            parts.append(extract_text(temp_file.name))
+                        finally:
+                            os.unlink(temp_file.name)
+                    text = "\n".join(parts)
             else:
                 text = extract_text(path)
 
             self.txt.setPlainText(text)
-            logger.info(f"Текст распознан: {len(text)} символов")
+            logger.info(f"Текст получен: {len(text)} символов")
 
+            source = "извлечён из PDF без OCR" if from_text_layer else "распознан (OCR)"
             QMessageBox.information(
                 self,
                 "Готово",
-                f"Текст распознан ({len(text)} символов).\n\n"
+                f"Текст {source} ({len(text)} символов).\n\n"
                 f"Теперь нажмите ' Перенести данные' для заполнения таблицы."
             )
 
@@ -459,15 +473,19 @@ class ScanDialog(QDialog):
 
             count = len(data["items"])
             logger.info(f"Распознано {count} позиций")
-            QMessageBox.information(
-                self,
-                "Готово",
+
+            msg = (
                 f"✅ Распознано позиций: {count}\n"
                 f"📅 Дата: {data['date'] or 'не найдена'}\n"
                 f"🏢 Компания: {data['company'] or 'не найдена'}\n"
-                f"💰 Итого: {data['total']:.2f}\n\n"
-                f"Проверьте данные и при необходимости отредактируйте."
+                f"💰 Итого: {data['total']:.2f}\n"
             )
+            if data.get("discount_total"):
+                msg += f"🏷️ Скидки по карте: {data['discount_total']:.2f}\n"
+            if data.get("warnings"):
+                msg += "\n⚠️ " + "\n⚠️ ".join(data["warnings"]) + "\n"
+            msg += "\nПроверьте данные и при необходимости отредактируйте."
+            QMessageBox.information(self, "Готово", msg)
 
         except Exception as e:
             logger.error(f"Ошибка парсинга: {e}")
@@ -503,12 +521,21 @@ class ScanDialog(QDialog):
 
         try:
             date = self.ed_date.date().toString("yyyy-MM-dd")
+
+            # ИСПРАВЛЕНО: итог чека считается из таблицы (раньше записывался 0)
+            total_amount = 0.0
+            for r in range(self.tbl.rowCount()):
+                try:
+                    total_amount += float(self.tbl.item(r, 4).text().replace(",", "."))
+                except (ValueError, AttributeError):
+                    pass
+
             rn = db.next_row_number()
             rid = db.insert("receipts", {
                 "row_number": rn,
                 "receipt_date": date,
                 "company_id": self.cb_company.currentData(),
-                "total_amount": 0,
+                "total_amount": round(total_amount, 2),
                 "in_process": 0,
                 "processed": 0,
                 "payer_id": self.cb_payer.currentData()
@@ -546,6 +573,12 @@ class ScanDialog(QDialog):
                     p = float(self.tbl.item(r, 3).text().replace(",", "."))
                 except (ValueError, AttributeError):
                     p = 0.0
+                # ИСПРАВЛЕНО: сумма берётся из столбца "Сумма" (точное значение
+                # из чека), т.к. цена округлена и q*p может отличаться на копейки
+                try:
+                    s = float(self.tbl.item(r, 4).text().replace(",", "."))
+                except (ValueError, AttributeError):
+                    s = q * p
                 ep = self.tbl.cellWidget(r, 5).currentData()
 
                 db.insert("receipt_items", {
@@ -554,7 +587,7 @@ class ScanDialog(QDialog):
                     "item_name_id": nid,
                     "quantity": q,
                     "price": p,
-                    "sum": q * p,
+                    "sum": round(s, 2),
                     "expense_payer_id": ep
                 })
 
@@ -565,6 +598,7 @@ class ScanDialog(QDialog):
                 self,
                 "Успешно",
                 f"✅ Чек сохранён!\n\n"
+                f"💰 Сумма чека: {total_amount:.2f} ₽\n"
                 f"Новых наименований: {added}\n"
                 f"Уже было в базе: {skipped}"
             )
