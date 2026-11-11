@@ -160,8 +160,13 @@ class MainWindow(QMainWindow):
                     4: "in_process", 5: "processed", 6: "process_date", 7: "payer_name"}
             k = keys.get(self.sort_col)
             if k:
-                rows = sorted(rows, key=lambda r: (r.get(k) is None, r.get(k) or ""),
-                              reverse=not self.sort_asc)
+                numeric = k in ("row_number", "total_amount", "in_process", "processed")
+                if numeric:
+                    rows = sorted(rows, key=lambda r: (r.get(k) is None, r.get(k) or 0),
+                                  reverse=not self.sort_asc)
+                else:
+                    rows = sorted(rows, key=lambda r: (r.get(k) is None, str(r.get(k) or "")),
+                                  reverse=not self.sort_asc)
 
         self.tbl.blockSignals(True)
         self.tbl.setRowCount(0)
