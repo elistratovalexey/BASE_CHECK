@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
         self.sub.setHorizontalHeaderLabels([
             "Номер", "Наименование", "Кол-во", "Цена", "Сумма",
             "Чей расход", "Чей расход 2"])
+        self.sub.horizontalHeaderItem(1).setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)      
         self.sub.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.sub.itemChanged.connect(self._on_sub_changed)
         lay.addWidget(self.sub)
@@ -143,10 +144,18 @@ class MainWindow(QMainWindow):
             if n["name"] != current_name:
                 cb.addItem(n["name"])
         cb.setEditText(current_name or "")
-        cb.currentIndexChanged.connect(lambda _=None, w=cb: on_change(w))
-        cb.lineEdit().editingFinished.connect(lambda w=cb: on_change(w))
-        return cb
+        le = cb.lineEdit()
+        le.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        le.setCursorPosition(0)
 
+        def pick(_=None, w=cb):
+            w.lineEdit().setCursorPosition(0)
+            on_change(w)
+
+        cb.currentIndexChanged.connect(pick)
+        le.editingFinished.connect(lambda w=cb: on_change(w))
+        return cb
+    
     # ---------- обновление ----------
     def refresh(self):
         logger.debug("Обновление таблицы чеков")

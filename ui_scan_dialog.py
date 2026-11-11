@@ -33,6 +33,18 @@ class ScanDialog(QDialog):
                 cb.setCurrentIndex(idx)
         return cb
 
+    def _name_cell_combo(self, name=""):
+        cb = QComboBox(); cb.setEditable(True)
+        cb.addItem(name)
+        for n in db.fetch_all("item_names"):
+            if n["name"] != name:
+                cb.addItem(n["name"])
+        cb.setEditText(name)
+        cb.lineEdit().setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        cb.lineEdit().setCursorPosition(0)
+        cb.currentIndexChanged.connect(lambda _=None, w=cb: w.lineEdit().setCursorPosition(0))
+        return cb
+    
     def _build(self):
         lay = QVBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -49,6 +61,7 @@ class ScanDialog(QDialog):
         self.tbl.setHorizontalHeaderLabels([
             "№", "Наименование", "Кол-во", "Цена", "Сумма",
             "Чей расход", "Чей расход 2"])
+        self.tbl.horizontalHeaderItem(1).setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl.itemChanged.connect(self._on_item_changed)
         right_lay.addWidget(self.tbl)
@@ -100,10 +113,7 @@ class ScanDialog(QDialog):
     def add_item(self):
         i = self.tbl.rowCount(); self.tbl.insertRow(i)
         self.tbl.setItem(i, 0, QTableWidgetItem(str(i + 1))); self.tbl.item(i, 0).setFlags(Qt.ItemIsEnabled)
-        cb = QComboBox(); cb.setEditable(True); cb.addItem("")
-        for n in db.fetch_all("item_names"):
-            cb.addItem(n["name"])
-        self.tbl.setCellWidget(i, 1, cb)
+        self.tbl.setCellWidget(i, 1, self._name_cell_combo(""))
         self.tbl.setItem(i, 2, QTableWidgetItem("1.00"))
         self.tbl.setItem(i, 3, QTableWidgetItem("0.00"))
         self.tbl.setItem(i, 4, QTableWidgetItem("0.00")); self.tbl.item(i, 4).setFlags(Qt.ItemIsEnabled)
@@ -163,10 +173,7 @@ class ScanDialog(QDialog):
                             price = total / qty if qty > 0 else 0
                             r = self.tbl.rowCount(); self.tbl.insertRow(r)
                             self.tbl.setItem(r, 0, QTableWidgetItem(str(r + 1))); self.tbl.item(r, 0).setFlags(Qt.ItemIsEnabled)
-                            cb = QComboBox(); cb.setEditable(True); cb.addItem(name)
-                            for n in db.fetch_all("item_names"):
-                                cb.addItem(n["name"])
-                            cb.setEditText(name); self.tbl.setCellWidget(r, 1, cb)
+                            self.tbl.setCellWidget(r, 1, self._name_cell_combo(name))
                             self.tbl.setItem(r, 2, QTableWidgetItem(str(qty)))
                             self.tbl.setItem(r, 3, QTableWidgetItem(f"{price:.2f}"))
                             self.tbl.setItem(r, 4, QTableWidgetItem(f"{total:.2f}")); self.tbl.item(r, 4).setFlags(Qt.ItemIsEnabled)
@@ -301,10 +308,7 @@ class ScanDialog(QDialog):
             for it in data["items"]:
                 r = self.tbl.rowCount(); self.tbl.insertRow(r)
                 self.tbl.setItem(r, 0, QTableWidgetItem(str(r + 1))); self.tbl.item(r, 0).setFlags(Qt.ItemIsEnabled)
-                cb_name = QComboBox(); cb_name.setEditable(True); cb_name.addItem(it["name"])
-                for n in db.fetch_all("item_names"):
-                    cb_name.addItem(n["name"])
-                cb_name.setEditText(it["name"]); self.tbl.setCellWidget(r, 1, cb_name)
+                self.tbl.setCellWidget(r, 1, self._name_cell_combo(it["name"]))
                 self.tbl.setItem(r, 2, QTableWidgetItem(str(it["qty"])))
                 self.tbl.setItem(r, 3, QTableWidgetItem(f"{it['price']:.2f}"))
                 self.tbl.setItem(r, 4, QTableWidgetItem(f"{it['sum']:.2f}")); self.tbl.item(r, 4).setFlags(Qt.ItemIsEnabled)

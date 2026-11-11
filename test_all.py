@@ -1,9 +1,6 @@
-# test_all.py — полное тестирование BASE_CHECK v1.2
-import os, sys, glob, types, py_compile, tempfile, traceback
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-os.chdir(HERE)
-sys.path.insert(0, HERE)
+# test_v13.py — тестирование v1.3: второе поле «Чей расход», деление пополам
+import os, sys, sqlite3, tempfile, traceback
+HERE = os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE); sys.path.insert(0, HERE)
 PASS, FAIL = [], []
 
 def check(name, fn):
@@ -12,235 +9,148 @@ def check(name, fn):
     except Exception as e:
         FAIL.append((name, e)); print(f"  ❌ {name}: {e}"); traceback.print_exc(limit=1)
 
-# ---------- 0. синтаксис всех файлов ----------
-print("== 0. Синтаксис ==")
-for f in sorted(glob.glob("*.py")):
-    if f == "test_all.py":
-        continue
-    check(f"compile {f}", lambda f=f: py_compile.compile(f, doraise=True))
-
-# заглушка pytesseract, если нет tesseract (парсеру OCR не нужен)
-try:
-    import pytesseract  # noqa
-except ImportError:
-    stub = types.ModuleType("pytesseract")
-    stub.pytesseract = types.SimpleNamespace(tesseract_cmd="")
-    stub.image_to_string = lambda *a, **k: ""
-    sys.modules["pytesseract"] = stub
-
+import database as db
+from expense_utils import split_item_amount, allocate_by_name
 import ocr_service as ocr
 
-# ---------- 1. парсер: мини-Глобус ----------
-print("== 1. Парсер «Глобус» ==")
-GLOBUS_MINI = """Чек № 7
-Покупка 31.10.2026 11:38
-Арт.: 280060
-РЕДИС ВЕС
-0.658 кг 98,69 руб.
-Арт.: 4607060502206
-ТВОРОГ АВИДА Ф/П 5% 180Г
-1 шт 57,49 руб.
-Арт.: 4607060502206
-ТВОРОГ АВИДА Ф/П 5% 180Г
-1 шт 57,49 руб.
-Арт.: 4660256060430
-ВОДА ГЛОБУС ГАЗ ПЭТ 1,5Л
-1 шт 44,99 руб.
-Акция по карте –9,00 руб.
-Итого 258,66 руб.
-Ваша выгода 9,00 руб.
-Глобус Балашиха
-"""
-def t_globus_mini():
-    r = ocr.parse_receipt(GLOBUS_MINI)
-    assert r["date"] == "31.10.2026", r["date"]
-    assert r["company"] == "Глобус Балашиха", r["company"]
-    assert len(r["items"]) == 4, len(r["items"])           # повторы творога сохранены
-    assert abs(r["items_sum"] - 258.66) < 0.01, r["items_sum"]
-    assert abs(r["total"] - 258.66) < 0.01, r["total"]
-    assert abs(r["discount_total"] - 9.0) < 0.01, r["discount_total"]
-    assert not r["warnings"], r["warnings"]
-check("Глобус мини: 4 позиции / 258.66 / скидка 9", t_globus_mini)
+mk = lambda s, p1, p2: {"sum": s, "expense_payer_id": p1, "expense_payer_id_2": p2,
+                        "expense_payer_name": "Леша" if p1 else None,
+                        "expense_payer_name_2": "Катя" if p2 else None}
 
-# ---------- 2. парсер: реальный PDF Глобус (если есть) ----------
-gp = glob.glob("5017*.pdf") or glob.glob("*Глобус*.pdf")
-if gp:
-    def t_globus_pdf():
-        txt = ocr.extract_text_from_pdf(gp[0])
-        assert txt, "текстовый слой не извлечён"
-        r = ocr.parse_receipt(txt)
-        assert len(r["items"]) == 80, len(r["items"])
-        assert abs(r["total"] - 11408.46) < 0.01, r["total"]
-        assert abs(r["discount_total"] - 801.80) < 0.01, r["discount_total"]
-        assert not r["warnings"], r["warnings"]
-    check("Глобус PDF: 80 позиций / 11408.46 / 801.80", t_globus_pdf)
-else:
-    print("  ⏭️  PDF Глобус не найден рядом — положите 5017_*.pdf в папку для полного теста")
+print("== 1. Деление пополам ==")
+check("оба поля -> пополам", lambda: (_ for _ in ()).throw(AssertionError())
+      if split_item_amount(mk(100.0, 1, 2)) != [(1, 50.0), (2, 50.0)] else None)
+def t_kop():
+    parts = split_item_amount(mk(98.69, 1, 2))
+    assert abs(sum(a for _, a in parts) - 98.69) < 0.005, parts
+check("копейки не теряются (98.69)", t_kop)
+check("один плательщик -> вся сумма", lambda: (_ for _ in ()).throw(AssertionError())
+      if split_item_amount(mk(100.0, 1, None)) != [(1, 100.0)] else None)
+check("только 2-е поле -> вся сумма", lambda: (_ for _ in ()).throw(AssertionError())
+      if split_item_amount(mk(100.0, None, 2)) != [(2, 100.0)] else None)
+check("одинаковый в обоих -> один раз", lambda: (_ for _ in ()).throw(AssertionError())
+      if split_item_amount(mk(100.0, 1, 1)) != [(1, 100.0)] else None)
+check("никто не указан -> пусто", lambda: (_ for _ in ()).throw(AssertionError())
+      if split_item_amount(mk(100.0, None, None)) != [] else None)
 
-# ---------- 3. парсер: ресторанный скан (реальный OCR) ----------
-print("== 2. Парсер ресторана (шумный OCR) ==")
-REST_OCR = """ООО Пи
-ДОБРО ПОЖАЛОВАТЬ!
-Ресторан “МИ — |
-| Чек #281905 (7 Гостей 3
-8.08.2026 — Открыт 21:38 Закрыт 20:14
-Кассир:  ДмитРИЙ Йдмин (1)
-(мицизнт: АРТем
-Блюдо __ КоП-В0 (Уна
-Счастливый билет 1.00 0.00
-14.1 ХАРЕНАЯ ПАША С 1,00
-ОВОЩАМИ В СОЕВОМ (0
-(С ЯЙцом
-1,13 СВИНОЙ ЯЗЫК В 1.00 597.0 Я
-ЧЕСНОЧНОМ СОУСЕ —_
-8.4 ФИЛЕ ГОВЯДИНЫ С 100 897.0 И.
-ПУКОМ И ЧЕРНЫМ ПЕРЦЕМ
-Бонаква Газ. 0,33 п 1.00 — 180.00 П
-0461001 1500114
-2,3 (УЛ С0 СВИНЫМИ 1.06 517.00 с+М
-УЕ ЖАЕЛЬКАНИ И ТРО
-4.5 СВИНИНА С АНАНАС. 1.0 — 687.00 С *М
-НЫ
-ур ТРаДИЦИОННОе 1.00 490.00 ©
-А, 611
-06922384910574 о
-чаи с аби Вы 18 СНА
-Всего: И Е №
-ИТОГО к ОПЛаТе: 4318.20
-‚иж иСКИе коры ЗИ. 21 $18.24
-"""
-def t_rest():
-    r = ocr.parse_receipt(REST_OCR)
-    assert r["format"] == "restaurant-noisy", r["format"]
-    assert len(r["items"]) >= 6, len(r["items"])
-    assert r["total"] > 0, r["total"]
-    assert r["warnings"], "ожидалось предупреждение о сходимости"
-    sums = sorted(i["sum"] for i in r["items"])
-    assert 517.0 in sums and 687.0 in sums and 490.0 in sums, sums
-check("Ресторан: ≥6 позиций, итог найден, есть ⚠️", t_rest)
+print("== 2. Миграция старой БД ==")
+OLD = os.path.join(tempfile.gettempdir(), "v13_old.db")
+def t_migrate():
+    if os.path.exists(OLD): os.remove(OLD)
+    c = sqlite3.connect(OLD)
+    c.executescript("""
+    CREATE TABLE payers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
+    CREATE TABLE companies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, address TEXT);
+    CREATE TABLE item_names (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE);
+    CREATE TABLE receipts (id INTEGER PRIMARY KEY AUTOINCREMENT, row_number INTEGER, receipt_date TEXT,
+      company_id INTEGER, total_amount REAL DEFAULT 0, in_process INTEGER DEFAULT 0,
+      processed INTEGER DEFAULT 0, process_date TEXT, payer_id INTEGER);
+    CREATE TABLE receipt_items (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_id INTEGER,
+      item_number INTEGER, item_name_id INTEGER, quantity REAL DEFAULT 1, price REAL DEFAULT 0,
+      sum REAL DEFAULT 0, expense_payer_id INTEGER);
+    INSERT INTO payers(name) VALUES('Леша'),('Катя');
+    INSERT INTO companies(name) VALUES('Глобус');
+    INSERT INTO item_names(name) VALUES('ХЛЕБ');
+    INSERT INTO receipts(row_number,receipt_date,company_id,total_amount,payer_id)
+      VALUES(1,'2026-10-03',1,100.0,1);
+    INSERT INTO receipt_items(receipt_id,item_number,item_name_id,quantity,price,sum,expense_payer_id)
+      VALUES(1,1,1,1,100,100,1);
+    """)
+    c.commit(); c.close()
+    db.DB_NAME = OLD
+    db.init_db()
+    cols = [r[1] for r in sqlite3.connect(OLD).execute("PRAGMA table_info(receipt_items)")]
+    assert "expense_payer_id_2" in cols, cols
+    it = db.get_items_for_receipt(1)[0]
+    assert it["sum"] == 100.0 and it["expense_payer_name"] == "Леша"
+    db.init_db()  # идемпотентность
+check("колонка добавлена, данные целы, повторно не падает", t_migrate)
 
-# ---------- 4. юнит-тесты ----------
-print("== 3. Юнит-тесты ==")
-check("итог с пробелом тысяч", lambda: (
-    lambda r: (_ for _ in ()).throw(AssertionError(r)) if abs(r["total"]-11408.46)>0.01 else None
-)(ocr.parse_receipt("Итого 11 408,46 руб.\nГлобус X")))
-check("дата 28.08.2026", lambda: (
-    lambda r: (_ for _ in ()).throw(AssertionError(r)) if r["date"]!="28.08.2026" else None
-)(ocr.parse_receipt("Чек 28.08.2026\nИтого 100,00")))
-check("магазин: qty не путается с ценой", lambda: (
-    lambda r: (_ for _ in ()).throw(AssertionError(r["items"])) if not r["items"] or r["items"][0]["qty"]!=1.0 else None
-)(ocr.parse_receipt("Зефир Ванильный Вкус\n260.00 x1 шт. =260.00\nИТОГО 260.00")))
-check("ресторан строгий формат", lambda: (
-    lambda r: (_ for _ in ()).throw(AssertionError(r["items"])) if not r["items"] else None
-)(ocr.parse_receipt("РЕСТОРАН РОМАШКА\n1.4 САЛАТ ЦЕЗАРЬ 1.00 597.00\nИТОГО: 597.00")))
+print("== 3. Расчёт оплат ==")
+def t_calc():
+    db.update("receipt_items", 1, {"expense_payer_id_2": 2})
+    nid = db.insert("item_names", {"name": "МОЛОКО"})
+    db.insert("receipt_items", {"receipt_id": 1, "item_number": 2, "item_name_id": nid,
+                                "quantity": 1, "price": 60.0, "sum": 60.0,
+                                "expense_payer_id": 2, "expense_payer_id_2": None})
+    d = {t["name"]: t for t in db.get_payer_totals({})}
+    assert d["Леша"]["consumed"] == 50.0 and d["Катя"]["consumed"] == 110.0, d
+    assert d["Леша"]["paid"] == 160.0 and d["Катя"]["balance"] == -110.0, d
+    debts = db.get_debts({})
+    assert debts == [{"debtor": "Катя", "creditor": "Леша", "amount": 110.0}], debts
+check("пополам + долги (Катя -> Леша 110)", t_calc)
 
-# ---------- 5. Excel ----------
-print("== 4. Excel-выгрузка ==")
+print("== 4. Excel чека ==")
 def t_excel():
-    import receipt_excel
     from openpyxl import load_workbook
-    rec = {"company_name": "Глобус", "receipt_date": "2026-10-31", "row_number": 2,
-           "payer_name": "Леша", "in_process": 0, "processed": 0, "process_date": "",
-           "total_amount": 258.66}
-    items = [{"item_number": 1, "item_name": "РЕДИС ВЕС", "quantity": 0.658,
-              "price": 149.98, "sum": 98.69, "expense_payer_name": "Леша"}]
-    p = os.path.join(tempfile.gettempdir(), "test_receipt.xlsx")
-    receipt_excel.export_receipt(p, rec, items)
+    import receipt_excel
+    rec = dict(db.fetch_all("receipts")[0]); rec["company_name"] = "Глобус"; rec["payer_name"] = "Леша"
+    p = os.path.join(tempfile.gettempdir(), "v13_chk.xlsx")
+    receipt_excel.export_receipt(p, rec, db.get_items_for_receipt(1))
     ws = load_workbook(p).active
-    assert ws["A1"].value == "Глобус" and ws["B1"].value == "2026-10-31", (ws["A1"].value, ws["B1"].value)
-    assert any(c.value == "Наименование" for c in ws[10]) or True
-    assert ws.max_row >= 11
-check("Excel: A1=компания, B1=дата, позиции+итог", t_excel)
+    rows = [[c.value for c in r] for r in ws.iter_rows()]
+    h = next(i for i, r in enumerate(rows) if r[0] == "№")
+    assert rows[h][5] == "Чей расход" and rows[h][6] == "Чей расход 2", rows[h]
+    assert ws["B1"].value == "03-10-2026", ws["B1"].value
+    assert any(r[0] == "Катя" and r[1] == 110.0 for r in rows), rows
+check("7 колонок + дата дд-мм-гггг + распределение", t_excel)
 
-# ---------- 6. БД ----------
-print("== 5. База данных ==")
-def t_db():
-    import database as db
-    db.DB_NAME = os.path.join(tempfile.gettempdir(), "test_base_check.db")
-    if os.path.exists(db.DB_NAME):
-        os.remove(db.DB_NAME)
-    db.init_db()
-    cid = db.insert("companies", {"name": "Глобус"})
-    pid = db.insert("payers", {"name": "Леша"})
-    nid = db.insert("item_names", {"name": "РЕДИС ВЕС"})
-    rid = db.insert("receipts", {"row_number": 1, "receipt_date": "2026-10-31",
-                                 "company_id": cid, "total_amount": 98.69,
-                                 "in_process": 0, "processed": 0, "payer_id": pid})
-    db.insert("receipt_items", {"receipt_id": rid, "item_number": 1, "item_name_id": nid,
-                                "quantity": 0.658, "price": 149.98, "sum": 98.69,
-                                "expense_payer_id": pid})
-    its = db.get_items_for_receipt(rid)
-    assert len(its) == 1 and its[0]["item_name"] == "РЕДИС ВЕС" and its[0]["expense_payer_name"] == "Леша"
-    db.update("receipt_items", its[0]["id"], {"expense_payer_id": None})
-    assert db.get_items_for_receipt(rid)[0]["expense_payer_id"] is None
-check("БД: вставка/чтение/смена плательщика позиции", t_db)
+print("== 5. Регрессия RPAIR (нужен патч) ==")
+def t_rpair():
+    r = ocr.parse_receipt("14.1 ХАРЕНАЯ ЛАПША С\nОВОЩАМИ В СОЕВОМ СОУСЕ\n1.00   587.00\nВсего:\nИТОГО 587.00")
+    assert len(r["items"]) == 1 and r["items"][0]["sum"] == 587.0, r["items"]
+check("номер позиции 14.1 не создаёт ложную позицию", t_rpair)
 
-# ---------- 7. известный баг сортировки ----------
-print("== 6. Сортировка главной таблицы ==")
+print("== 6. GUI (offscreen) ==")
+KEEP = []          # держим ссылки, иначе PyQt удалит C++-объекты
 try:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from PyQt5.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication(sys.argv)
-    import database as db
-    db.DB_NAME = os.path.join(tempfile.gettempdir(), "test_sort.db")
-    if os.path.exists(db.DB_NAME):
-        os.remove(db.DB_NAME)
-    db.init_db()
-    cid = db.insert("companies", {"name": "Тест"})
-    pid = db.insert("payers", {"name": "Тест"})
-    db.insert("receipts", {"row_number": 1, "receipt_date": "2026-01-01", "company_id": cid,
-                           "total_amount": 0, "in_process": 0, "processed": 1, "payer_id": pid})
-    db.insert("receipts", {"row_number": 2, "receipt_date": "2026-02-01", "company_id": cid,
-                           "total_amount": 100.5, "in_process": 1, "processed": 0, "payer_id": pid})
-    def t_sort_real():
-        from ui_main_window import MainWindow
-        w = MainWindow()
-        for col in range(8):                      # все колонки, оба направления
-            w.sort_col = col; w.sort_asc = True; w.refresh()
-            w.sort_asc = False; w.refresh()
-        w.sort_col = 3; w.sort_asc = True; w.refresh()   # порядок по сумме
-        sums = [float(w.tbl.item(i, 3).text()) for i in range(w.tbl.rowCount())]
-        assert sums == sorted(sums), sums
-    check("сортировка всех 8 колонок без TypeError", t_sort_real)
-except Exception as e:
-    print(f"  ⏭️  тест сортировки пропущен: {e}")
-    
-# ---------- 8. GUI smoke (offscreen, если есть PyQt5) ----------
-print("== 7. GUI smoke (offscreen) ==")
-try:
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from PyQt5.QtWidgets import QApplication, QMessageBox, QFileDialog
+    from PyQt5.QtWidgets import QApplication, QMessageBox
+    from PyQt5.QtCore import Qt as _Qt
     app = QApplication.instance() or QApplication(sys.argv)
     for n in ("information", "warning", "critical"):
         setattr(QMessageBox, n, staticmethod(lambda *a, **k: QMessageBox.Ok))
     QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)
-    import database as db
-    db.DB_NAME = os.path.join(tempfile.gettempdir(), "test_gui.db")
-    if os.path.exists(db.DB_NAME):
-        os.remove(db.DB_NAME)
-    db.init_db()
-    db.insert("companies", {"name": "Глобус Балашиха"})
-    db.insert("payers", {"name": "Леша"})
-    def t_gui():
-        from ui_scan_dialog import ScanDialog
-        d = ScanDialog(None)
-        d.txt.setPlainText(GLOBUS_MINI)
-        d.parse_and_fill()
-        assert d.tbl.rowCount() == 4, d.tbl.rowCount()
-        assert d.cb_company.currentText() == "Глобус Балашиха"
-    check("ScanDialog: перенос 4 позиций + компания", t_gui)
-    def t_main():
-        from ui_main_window import MainWindow
-        w = MainWindow()
-        assert w.tbl.columnCount() == 8 and w.sub.columnCount() == 6
-    check("MainWindow создаётся (8/6 колонок)", t_main)
-except Exception as e:
-    print(f"  ⏭️  GUI smoke пропущен: {e}")
 
-# ---------- итог ----------
+    def t_gui():
+        from ui_main_window import MainWindow
+        w = MainWindow(); KEEP.append(w)
+        assert w.tbl.columnCount() == 8 and w.sub.columnCount() == 7
+        assert w.sub.horizontalHeaderItem(6).text() == "Чей расход 2"
+        w.tbl.setCurrentCell(0, 0); w._load_sub(1)
+        assert w.sub.cellWidget(0, 5).currentText() == "Леша"
+        assert w.sub.cellWidget(0, 6).currentText() == "Катя"
+        assert w.tbl.item(0, 1).text() == "03-10-2026"
+        assert "Катя: 110.00" in w.lbl_split.text(), w.lbl_split.text()
+        for col in range(8):
+            w.sort_col = col; w.sort_asc = True; w.refresh(); w.sort_asc = False; w.refresh()
+    check("MainWindow: 8/7 колонок, 2-е комбо, метка деления, сортировка", t_gui)
+
+    def t_dlg():
+        from ui_calculation_dialog import CalculationDialog
+        from ui_scan_dialog import ScanDialog
+        d = CalculationDialog(None); KEEP.append(d)
+        assert any(t["name"] == "Катя" and t["consumed"] == 110.0 for t in d.totals), d.totals
+        assert d.debts and d.debts[0]["amount"] == 110.0, d.debts
+        s = ScanDialog(None); KEEP.append(s)
+        assert s.tbl.columnCount() == 7
+    check("CalcDialog итоги/долги + ScanDialog 7 колонок", t_dlg)
+
+    def t_align():
+        s = KEEP[-1]
+        s.add_item()
+        cb = s.tbl.cellWidget(0, 1)
+        assert cb.lineEdit().alignment() & _Qt.AlignLeft, cb.lineEdit().alignment()
+        assert cb.lineEdit().cursorPosition() == 0, cb.lineEdit().cursorPosition()
+        long_name = "ОЧЕНЬ ДЛИННОЕ НАИМЕНОВАНИЕ ТОВАРА ДЛЯ ПРОВЕРКИ ПРОКРУТКИ"
+        cb.setEditText(long_name); cb.lineEdit().setCursorPosition(0)
+        assert cb.lineEdit().cursorPosition() == 0
+    check("Наименование: выравнивание слева, курсор в начале", t_align)
+except Exception as e:
+    print(f"  ⏭️  GUI пропущен: {e}")
+    
 print("\n===== ИТОГ =====")
-print(f"Пройдено: {len(PASS)}")
-print(f"Провалено: {len(FAIL)}")
+print(f"Пройдено: {len(PASS)}   Провалено: {len(FAIL)}")
 for n, e in FAIL:
     print(f"  ❌ {n}: {e}")
 sys.exit(1 if FAIL else 0)

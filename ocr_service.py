@@ -315,7 +315,6 @@ def _parse_restaurant_style(lines):
 # Гибкий ресторанный парсер: кол-во в ресторане ~1, ищем пары (1.x | 100) + сумма
 RPAIR = re.compile(r"(?<![\d.,])(1(?:[.,]\d{1,3})?|100|10)[\s—\-–]+(\d{1,7}[.,]\d{1,2})(?![.,]\d)")
 
-
 def _footer_index(det):
     for i, l in enumerate(det):
         ll = l.lower(); words = re.findall(r"[а-яё]+", ll)
