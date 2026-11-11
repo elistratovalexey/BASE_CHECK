@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QListWidget)
 from PyQt5.QtCore import Qt, QDate
 import database as db
+import date_utils
 from ocr_service import extract_text_best, extract_text_from_pdf, parse_receipt
 import os
 import tempfile
@@ -52,7 +53,9 @@ class ScanDialog(QDialog):
 
         info_group = QGroupBox("Информация о чеке"); info_lay = QHBoxLayout()
         info_lay.addWidget(QLabel("Дата:"))
-        self.ed_date = QDateEdit(); self.ed_date.setCalendarPopup(True); self.ed_date.setDate(QDate.currentDate())
+        self.ed_date = QDateEdit(); self.ed_date.setCalendarPopup(True)
+        self.ed_date.setDisplayFormat(date_utils.QT_DISPLAY)
+        self.ed_date.setDate(QDate.currentDate())
         info_lay.addWidget(self.ed_date)
         info_lay.addWidget(QLabel("Компания:"))
         self.cb_company = QComboBox(); self.cb_company.addItem("— не выбрана —", None)
@@ -238,7 +241,6 @@ class ScanDialog(QDialog):
             logger.error(f"Ошибка OCR: {e}"); QMessageBox.critical(self, "Ошибка OCR", str(e))
 
     def _offer_add_company(self, name):
-        """Пожелание 6: предложить добавить компанию из чека, если её нет в базе."""
         idx = self.cb_company.findText(name, Qt.MatchExactly)
         if idx < 0:
             idx = self.cb_company.findText(name, Qt.MatchContains)
@@ -309,7 +311,7 @@ class ScanDialog(QDialog):
             if not self.tbl.cellWidget(i, 1).currentText().strip():
                 QMessageBox.warning(self, "Внимание", f"Заполните наименование в строке {i + 1}!"); return
         try:
-            date = self.ed_date.date().toString("yyyy-MM-dd")
+            date = self.ed_date.date().toString(date_utils.QT_ISO)
             total_amount = 0.0
             for r in range(self.tbl.rowCount()):
                 try:

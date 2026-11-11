@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, QTimer, QDate
 from config import APP_VERSION, APP_DATE, APP_TITLE
 import database as db
+import date_utils
 from filters import build_filters
 from ui_receipt_dialog import ReceiptDialog
 from ui_companies_dialog import CompaniesDialog
@@ -50,10 +51,12 @@ class MainWindow(QMainWindow):
         filt = QHBoxLayout()
         filt.addWidget(QLabel("С:"))
         self.f_date_from = QDateEdit(); self.f_date_from.setCalendarPopup(True)
+        self.f_date_from.setDisplayFormat(date_utils.QT_DISPLAY)
         self.f_date_from.setDate(QDate(2000, 1, 1)); self.f_date_from.setMinimumDate(QDate(2000, 1, 1))
         filt.addWidget(self.f_date_from)
         filt.addWidget(QLabel("По:"))
         self.f_date_to = QDateEdit(); self.f_date_to.setCalendarPopup(True)
+        self.f_date_to.setDisplayFormat(date_utils.QT_DISPLAY)
         self.f_date_to.setDate(QDate(2099, 12, 31)); self.f_date_to.setMaximumDate(QDate(2099, 12, 31))
         filt.addWidget(self.f_date_to)
         self.f_in = QCheckBox("В обработку"); self.f_in.stateChanged.connect(self.refresh)
@@ -106,7 +109,7 @@ class MainWindow(QMainWindow):
 
     def _tick_clock(self):
         from PyQt5.QtCore import QDateTime
-        self.lbl_clock.setText(QDateTime.currentDateTime().toString("dd.MM.yyyy HH:mm:ss"))
+        self.lbl_clock.setText(QDateTime.currentDateTime().toString("dd-MM-yyyy HH:mm:ss"))
         QTimer.singleShot(1000, self._tick_clock)
 
     # ---------- выпадающие списки ----------
@@ -143,8 +146,8 @@ class MainWindow(QMainWindow):
         self._refresh_companies_combo()
         date_from = self.f_date_from.date(); date_to = self.f_date_to.date()
         f = build_filters(
-            date_from.toString("yyyy-MM-dd") if date_from > QDate(2000, 1, 1) else None,
-            date_to.toString("yyyy-MM-dd") if date_to < QDate(2099, 12, 31) else None,
+            date_from.toString(date_utils.QT_ISO) if date_from > QDate(2000, 1, 1) else None,
+            date_to.toString(date_utils.QT_ISO) if date_to < QDate(2099, 12, 31) else None,
             1 if self.f_in.isChecked() else None,
             1 if self.f_proc.isChecked() else None,
             self.f_company.currentData(),
@@ -173,7 +176,7 @@ class MainWindow(QMainWindow):
         for r in rows:
             i = self.tbl.rowCount(); self.tbl.insertRow(i)
             self.tbl.setItem(i, 0, QTableWidgetItem(str(r["row_number"])))
-            self.tbl.setItem(i, 1, QTableWidgetItem(r["receipt_date"] or ""))
+            self.tbl.setItem(i, 1, QTableWidgetItem(date_utils.to_display(r["receipt_date"])))
             self.tbl.setItem(i, 3, QTableWidgetItem(f"{r['total_amount']:.2f}"))
             chk1 = QTableWidgetItem(); chk1.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             chk1.setCheckState(Qt.Checked if r["in_process"] else Qt.Unchecked)
@@ -181,7 +184,7 @@ class MainWindow(QMainWindow):
             chk2 = QTableWidgetItem(); chk2.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             chk2.setCheckState(Qt.Checked if r["processed"] else Qt.Unchecked)
             self.tbl.setItem(i, 5, chk2)
-            self.tbl.setItem(i, 6, QTableWidgetItem(r.get("process_date") or ""))
+            self.tbl.setItem(i, 6, QTableWidgetItem(date_utils.to_display(r.get("process_date"))))
             self.tbl.item(i, 0).setData(Qt.UserRole, r["id"])
 
             rid = r["id"]
@@ -235,15 +238,21 @@ class MainWindow(QMainWindow):
         col = item.column(); data = {}
         try:
             if col == 1:
-                data["receipt_date"] = item.text()
+                data["receipt_date"] = date_utils.to_iso(item.text())
             elif col == 4:
                 data["in_process"] = 1 if item.checkState() == Qt.Checked else 0
             elif col == 5:
                 data["processed"] = 1 if item.checkState() == Qt.Checked else 0
             elif col == 6:
-                data["process_date"] = item.text()
+                data["process_date"] = date_utils.to_iso(item.text())
             if data:
                 db.update("receipts", rid, data)
+                # нормализуем отображение даты после ручного ввода
+                if col in (1, 6):
+                    key = "receipt_date" if col == 1 else "process_date"
+                    self.tbl.blockSignals(True)
+                    item.setText(date_utils.to_display(data[key]))
+                    self.tbl.blockSignals(False)
         except Exception as e:
             logger.error(f"Ошибка сохранения изменений чека {rid}: {e}")
 
@@ -388,7 +397,8 @@ class MainWindow(QMainWindow):
             payer = next((p["name"] for p in db.fetch_all("payers") if p["id"] == rec["payer_id"]), "")
             rec = dict(rec); rec["company_name"] = comp; rec["payer_name"] = payer
             items = db.get_items_for_receipt(rid)
-            default = f"чек_{rec['row_number']}_{rec['receipt_date']}.xlsx"
+            d = date_utils.to_display(rec.get("receipt_date")) or "без_даты"
+            default = f"чек_{rec['row_number']}_{d}.xlsx"
             path, _ = QFileDialog.getSaveFileName(self, "Сохранить чек в Excel", default, "Excel (*.xlsx)")
             if not path:
                 return

@@ -1,7 +1,8 @@
 # receipt_excel.py
-"""Выгрузка одного чека в Excel. Первая строка: компания + дата чека."""
+"""Выгрузка одного чека в Excel. Первая строка: компания + дата чека (дд-мм-гггг)."""
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font
+import date_utils
 
 
 def export_receipt(path, receipt, items):
@@ -9,8 +10,8 @@ def export_receipt(path, receipt, items):
     ws = wb.active
     ws.title = "Чек"
 
-    # Первая строка — название компании и дата чека (по требованию)
-    ws.append([receipt.get("company_name") or "", receipt.get("receipt_date") or ""])
+    ws.append([receipt.get("company_name") or "",
+               date_utils.to_display(receipt.get("receipt_date"))])
     ws["A1"].font = Font(bold=True, size=12)
     ws["B1"].font = Font(bold=True, size=12)
 
@@ -19,7 +20,7 @@ def export_receipt(path, receipt, items):
     ws.append(["Кто платил", receipt.get("payer_name") or ""])
     ws.append(["В обработку", "да" if receipt.get("in_process") else "нет"])
     ws.append(["Обработан", "да" if receipt.get("processed") else "нет"])
-    ws.append(["Дата обработки", receipt.get("process_date") or ""])
+    ws.append(["Дата обработки", date_utils.to_display(receipt.get("process_date"))])
     ws.append(["Сумма чека", receipt.get("total_amount") or 0])
     ws.append([])
 
