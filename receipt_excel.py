@@ -1,8 +1,11 @@
 # receipt_excel.py
-"""Выгрузка одного чека в Excel. Первая строка: компания + дата чека (дд-мм-гггг)."""
+"""Выгрузка чека в Excel. Первая строка: компания + дата (дд-мм-гггг).
+Колонки «Чей расход» и «Чей расход 2» + распределение расхода пополам.
+"""
 from openpyxl import Workbook
 from openpyxl.styles import Font
 import date_utils
+from expense_utils import allocate_by_name
 
 
 def export_receipt(path, receipt, items):
@@ -24,8 +27,7 @@ def export_receipt(path, receipt, items):
     ws.append(["Сумма чека", receipt.get("total_amount") or 0])
     ws.append([])
 
-    header = ["№", "Наименование", "Кол-во", "Цена", "Сумма", "Чей расход"]
-    ws.append(header)
+    ws.append(["№", "Наименование", "Кол-во", "Цена", "Сумма", "Чей расход", "Чей расход 2"])
     for c in ws[ws.max_row]:
         c.font = Font(bold=True)
 
@@ -38,15 +40,29 @@ def export_receipt(path, receipt, items):
             it.get("price"),
             it.get("sum"),
             it.get("expense_payer_name") or "",
+            it.get("expense_payer_name_2") or "",
         ])
         total += it.get("sum") or 0
 
-    ws.append(["", "", "", "Итого", round(total, 2), ""])
+    ws.append(["", "", "", "Итого", round(total, 2), "", ""])
     ws[ws.max_row][3].font = Font(bold=True)
     ws[ws.max_row][4].font = Font(bold=True)
 
-    widths = [10, 50, 10, 12, 12, 20]
-    for i, w in enumerate(widths, 1):
+    ws.append([])
+    ws.append(["Распределение расхода (оба поля заполнены — пополам)"])
+    ws[ws.max_row][0].font = Font(bold=True)
+    ws.append(["Плательщик", "Сумма"])
+    for c in ws[ws.max_row][:2]:
+        c.font = Font(bold=True)
+    allocated = 0.0
+    for name, amount in allocate_by_name(items):
+        ws.append([name, amount])
+        allocated += amount
+    ws.append(["Итого распределено", round(allocated, 2)])
+    ws[ws.max_row][0].font = Font(bold=True)
+    ws[ws.max_row][1].font = Font(bold=True)
+
+    for i, w in enumerate([10, 50, 10, 12, 12, 22, 22], 1):
         ws.column_dimensions[chr(64 + i)].width = w
 
     wb.save(path)

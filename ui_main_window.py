@@ -25,7 +25,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         logger.info("Создание главного окна")
         self.setWindowTitle(APP_TITLE)
-        self.resize(1200, 700)
+        self.resize(1300, 750)
         self.sort_col = None
         self.sort_asc = True
         self._build_ui()
@@ -97,8 +97,10 @@ class MainWindow(QMainWindow):
         self.tbl.currentCellChanged.connect(self._on_current_changed)
         lay.addWidget(self.tbl)
 
-        self.sub = QTableWidget(0, 6)
-        self.sub.setHorizontalHeaderLabels(["Номер", "Наименование", "Кол-во", "Цена", "Сумма", "Чей расход"])
+        self.sub = QTableWidget(0, 7)
+        self.sub.setHorizontalHeaderLabels([
+            "Номер", "Наименование", "Кол-во", "Цена", "Сумма",
+            "Чей расход", "Чей расход 2"])
         self.sub.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.sub.itemChanged.connect(self._on_sub_changed)
         lay.addWidget(self.sub)
@@ -106,6 +108,11 @@ class MainWindow(QMainWindow):
         self.lbl_total = QLabel("Итого: 0.00 ₽")
         self.lbl_total.setAlignment(Qt.AlignRight)
         lay.addWidget(self.lbl_total)
+
+        self.lbl_split = QLabel("")
+        self.lbl_split.setAlignment(Qt.AlignRight)
+        self.lbl_split.setStyleSheet("color: #555;")
+        lay.addWidget(self.lbl_split)
 
     def _tick_clock(self):
         from PyQt5.QtCore import QDateTime
@@ -157,7 +164,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.exception(f"Ошибка получения записей: {e}"); rows = []
 
-        # сортировка в Python (виджеты в ячейках не переносятся sortItems)
         if self.sort_col is not None:
             keys = {0: "row_number", 1: "receipt_date", 2: "company_name", 3: "total_amount",
                     4: "in_process", 5: "processed", 6: "process_date", 7: "payer_name"}
@@ -247,7 +253,6 @@ class MainWindow(QMainWindow):
                 data["process_date"] = date_utils.to_iso(item.text())
             if data:
                 db.update("receipts", rid, data)
-                # нормализуем отображение даты после ручного ввода
                 if col in (1, 6):
                     key = "receipt_date" if col == 1 else "process_date"
                     self.tbl.blockSignals(True)
@@ -260,12 +265,15 @@ class MainWindow(QMainWindow):
         self._load_sub(self._current_receipt_id())
 
     def _load_sub(self, rid):
+        from expense_utils import allocate_by_name
         self.sub.blockSignals(True)
         self.sub.setRowCount(0)
         total = 0.0
+        items = []
         if rid:
             try:
-                for it in db.get_items_for_receipt(rid):
+                items = db.get_items_for_receipt(rid)
+                for it in items:
                     i = self.sub.rowCount(); self.sub.insertRow(i)
                     self.sub.setItem(i, 0, QTableWidgetItem(str(it["item_number"])))
                     self.sub.setItem(i, 2, QTableWidgetItem(str(it["quantity"])))
@@ -278,6 +286,8 @@ class MainWindow(QMainWindow):
                         it.get("item_name"), lambda w, iid=iid: self._set_item_name(iid, w)))
                     self.sub.setCellWidget(i, 5, self._payer_combo(
                         it.get("expense_payer_id"), lambda w, iid=iid: self._set_item_payer(iid, w), "—"))
+                    self.sub.setCellWidget(i, 6, self._payer_combo(
+                        it.get("expense_payer_id_2"), lambda w, iid=iid: self._set_item_payer_2(iid, w), "—"))
             except Exception as e:
                 logger.error(f"Ошибка загрузки позиций чека {rid}: {e}")
         i = self.sub.rowCount(); self.sub.insertRow(i)
@@ -285,6 +295,13 @@ class MainWindow(QMainWindow):
         self.sub.setItem(i, 4, QTableWidgetItem(f"{total:.2f}"))
         self.sub.blockSignals(False)
         self.lbl_total.setText(f"Итого: {total:.2f} ₽")
+
+        if items:
+            parts = [f"{n}: {a:.2f}" for n, a in allocate_by_name(items)]
+            self.lbl_split.setText("Расход (оба поля — пополам): " + " | ".join(parts))
+        else:
+            self.lbl_split.setText("")
+
         if rid:
             try:
                 db.update("receipts", rid, {"total_amount": total})
@@ -311,8 +328,16 @@ class MainWindow(QMainWindow):
     def _set_item_payer(self, iid, w):
         try:
             db.update("receipt_items", iid, {"expense_payer_id": w.currentData()})
+            self._load_sub(self._current_receipt_id())
         except Exception as e:
             logger.error(f"Ошибка смены расхода {iid}: {e}")
+
+    def _set_item_payer_2(self, iid, w):
+        try:
+            db.update("receipt_items", iid, {"expense_payer_id_2": w.currentData()})
+            self._load_sub(self._current_receipt_id())
+        except Exception as e:
+            logger.error(f"Ошибка смены расхода 2 {iid}: {e}")
 
     def _on_sub_changed(self, item):
         rid = self._current_receipt_id()
@@ -383,6 +408,7 @@ class MainWindow(QMainWindow):
         try:
             CalculationDialog(self).exec_(); self.refresh()
         except Exception as e:
+            logger.exception(f"Ошибка расчёта оплат: {e}")
             QMessageBox.critical(self, "Ошибка", str(e))
 
     def export_excel(self):

@@ -20,8 +20,18 @@ class ScanDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Сканирование чека")
-        self.resize(1200, 700)
+        self.resize(1300, 750)
         self._build()
+
+    def _payer_cell_combo(self, current_id=None):
+        cb = QComboBox(); cb.addItem("—", None)
+        for p in db.fetch_all("payers"):
+            cb.addItem(p["name"], p["id"])
+        if current_id is not None:
+            idx = cb.findData(current_id)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+        return cb
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -35,8 +45,10 @@ class ScanDialog(QDialog):
 
         right = QWidget(); right_lay = QVBoxLayout(right)
         right_lay.addWidget(QLabel("<b>📊 Распознанные данные:</b>"))
-        self.tbl = QTableWidget(0, 6)
-        self.tbl.setHorizontalHeaderLabels(["№", "Наименование", "Кол-во", "Цена", "Сумма", "Чей расход"])
+        self.tbl = QTableWidget(0, 7)
+        self.tbl.setHorizontalHeaderLabels([
+            "№", "Наименование", "Кол-во", "Цена", "Сумма",
+            "Чей расход", "Чей расход 2"])
         self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tbl.itemChanged.connect(self._on_item_changed)
         right_lay.addWidget(self.tbl)
@@ -45,10 +57,11 @@ class ScanDialog(QDialog):
         b_add = QPushButton("➕ Добавить"); b_add.clicked.connect(self.add_item); btn_lay.addWidget(b_add)
         b_remove = QPushButton("➖ Удалить"); b_remove.clicked.connect(self.remove_item); btn_lay.addWidget(b_remove)
         b_manual = QPushButton("✏️ Ручная разметка"); b_manual.clicked.connect(self.manual_mark_items); btn_lay.addWidget(b_manual)
+        b_split = QPushButton("👥 Всем пополам"); b_split.clicked.connect(self.fill_second_payer); btn_lay.addWidget(b_split)
         btn_lay.addStretch(); right_lay.addLayout(btn_lay)
         right.setLayout(right_lay)
 
-        splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([400, 600])
+        splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([400, 700])
         lay.addWidget(splitter)
 
         info_group = QGroupBox("Информация о чеке"); info_lay = QHBoxLayout()
@@ -94,10 +107,8 @@ class ScanDialog(QDialog):
         self.tbl.setItem(i, 2, QTableWidgetItem("1.00"))
         self.tbl.setItem(i, 3, QTableWidgetItem("0.00"))
         self.tbl.setItem(i, 4, QTableWidgetItem("0.00")); self.tbl.item(i, 4).setFlags(Qt.ItemIsEnabled)
-        cb_p = QComboBox(); cb_p.addItem("—", None)
-        for p in db.fetch_all("payers"):
-            cb_p.addItem(p["name"], p["id"])
-        self.tbl.setCellWidget(i, 5, cb_p)
+        self.tbl.setCellWidget(i, 5, self._payer_cell_combo())
+        self.tbl.setCellWidget(i, 6, self._payer_cell_combo())
         self._update_total()
 
     def remove_item(self):
@@ -107,6 +118,24 @@ class ScanDialog(QDialog):
             for i in range(self.tbl.rowCount()):
                 self.tbl.setItem(i, 0, QTableWidgetItem(str(i + 1)))
             self._update_total()
+
+    def fill_second_payer(self):
+        """Ставит во всех строках «Чей расход 2» плательщика чека (расход пополам)."""
+        pid = self.cb_payer.currentData()
+        if pid is None:
+            QMessageBox.warning(self, "Внимание", "Сначала выберите плательщика чека."); return
+        for r in range(self.tbl.rowCount()):
+            w1 = self.tbl.cellWidget(r, 5); w2 = self.tbl.cellWidget(r, 6)
+            if w1 is None or w2 is None:
+                continue
+            if w1.currentData() is None:
+                idx = w1.findData(pid)
+                if idx >= 0:
+                    w1.setCurrentIndex(idx)
+            if w1.currentData() != pid:
+                idx = w2.findData(pid)
+                if idx >= 0:
+                    w2.setCurrentIndex(idx)
 
     def manual_mark_items(self):
         text = self.txt.toPlainText(); lines = text.split('\n')
@@ -141,10 +170,8 @@ class ScanDialog(QDialog):
                             self.tbl.setItem(r, 2, QTableWidgetItem(str(qty)))
                             self.tbl.setItem(r, 3, QTableWidgetItem(f"{price:.2f}"))
                             self.tbl.setItem(r, 4, QTableWidgetItem(f"{total:.2f}")); self.tbl.item(r, 4).setFlags(Qt.ItemIsEnabled)
-                            cb_payer = QComboBox(); cb_payer.addItem("—", None)
-                            for p in db.fetch_all("payers"):
-                                cb_payer.addItem(p["name"], p["id"])
-                            self.tbl.setCellWidget(r, 5, cb_payer)
+                            self.tbl.setCellWidget(r, 5, self._payer_cell_combo())
+                            self.tbl.setCellWidget(r, 6, self._payer_cell_combo())
             self._update_total(); dlg.accept()
 
         b_ok.clicked.connect(on_ok); b_cancel.clicked.connect(dlg.reject); dlg.exec_()
@@ -281,10 +308,8 @@ class ScanDialog(QDialog):
                 self.tbl.setItem(r, 2, QTableWidgetItem(str(it["qty"])))
                 self.tbl.setItem(r, 3, QTableWidgetItem(f"{it['price']:.2f}"))
                 self.tbl.setItem(r, 4, QTableWidgetItem(f"{it['sum']:.2f}")); self.tbl.item(r, 4).setFlags(Qt.ItemIsEnabled)
-                cb_payer = QComboBox(); cb_payer.addItem("—", None)
-                for p in db.fetch_all("payers"):
-                    cb_payer.addItem(p["name"], p["id"])
-                self.tbl.setCellWidget(r, 5, cb_payer)
+                self.tbl.setCellWidget(r, 5, self._payer_cell_combo())
+                self.tbl.setCellWidget(r, 6, self._payer_cell_combo())
             self._update_total()
 
             msg = (f"✅ Распознано позиций: {len(data['items'])}\n"
@@ -349,9 +374,11 @@ class ScanDialog(QDialog):
                     s = float(self.tbl.item(r, 4).text().replace(",", "."))
                 except (ValueError, AttributeError):
                     s = q * p
+                w2 = self.tbl.cellWidget(r, 6)
                 db.insert("receipt_items", {"receipt_id": rid, "item_number": r + 1, "item_name_id": nid,
                                             "quantity": q, "price": p, "sum": round(s, 2),
-                                            "expense_payer_id": self.tbl.cellWidget(r, 5).currentData()})
+                                            "expense_payer_id": self.tbl.cellWidget(r, 5).currentData(),
+                                            "expense_payer_id_2": w2.currentData() if w2 else None})
             QMessageBox.information(self, "Успешно", f"✅ Чек сохранён!\n\n💰 Сумма: {total_amount:.2f} ₽\nНовых наименований: {added}\nУже было: {skipped}")
             self.accept()
         except Exception as e:
