@@ -176,13 +176,35 @@ def t_db():
 check("БД: вставка/чтение/смена плательщика позиции", t_db)
 
 # ---------- 7. известный баг сортировки ----------
-print("== 6. Проверка бага сортировки (ожидается FAIL до патча) ==")
-def t_sort_bug():
-    rows = [{"in_process": 0}, {"in_process": 1}]
-    k = "in_process"
-    sorted(rows, key=lambda r: (r.get(k) is None, r.get(k) or ""))  # TypeError до исправления
-check("сортировка числовой колонки (0/1) без TypeError", t_sort_bug)
-
+print("== 6. Сортировка главной таблицы ==")
+try:
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PyQt5.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    import database as db
+    db.DB_NAME = os.path.join(tempfile.gettempdir(), "test_sort.db")
+    if os.path.exists(db.DB_NAME):
+        os.remove(db.DB_NAME)
+    db.init_db()
+    cid = db.insert("companies", {"name": "Тест"})
+    pid = db.insert("payers", {"name": "Тест"})
+    db.insert("receipts", {"row_number": 1, "receipt_date": "2026-01-01", "company_id": cid,
+                           "total_amount": 0, "in_process": 0, "processed": 1, "payer_id": pid})
+    db.insert("receipts", {"row_number": 2, "receipt_date": "2026-02-01", "company_id": cid,
+                           "total_amount": 100.5, "in_process": 1, "processed": 0, "payer_id": pid})
+    def t_sort_real():
+        from ui_main_window import MainWindow
+        w = MainWindow()
+        for col in range(8):                      # все колонки, оба направления
+            w.sort_col = col; w.sort_asc = True; w.refresh()
+            w.sort_asc = False; w.refresh()
+        w.sort_col = 3; w.sort_asc = True; w.refresh()   # порядок по сумме
+        sums = [float(w.tbl.item(i, 3).text()) for i in range(w.tbl.rowCount())]
+        assert sums == sorted(sums), sums
+    check("сортировка всех 8 колонок без TypeError", t_sort_real)
+except Exception as e:
+    print(f"  ⏭️  тест сортировки пропущен: {e}")
+    
 # ---------- 8. GUI smoke (offscreen, если есть PyQt5) ----------
 print("== 7. GUI smoke (offscreen) ==")
 try:
