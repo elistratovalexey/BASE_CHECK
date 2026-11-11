@@ -149,6 +149,24 @@ try:
 except Exception as e:
     print(f"  ⏭️  GUI пропущен: {e}")
     
+print("== 7. Регрессия магазинного паттерна ==")
+def t_shop_split():
+    r = ocr.parse_receipt("Зефир Ванильный Вкус\n1.00   587.00\nИТОГО 587.00")
+    assert len(r["items"]) == 1, r["items"]
+    assert r["items"][0]["qty"] == 1.0 and r["items"][0]["sum"] == 587.0, r["items"]
+check("строка «кол-во сумма» не режется на 58 + 7.00", t_shop_split)
+
+def t_shop_fmt():
+    for line, q, s in [("260.00 x1 шт. =260.00", 1.0, 260.0),
+                       ("260.00 Ж1 шт. =260.00", 1.0, 260.0),
+                       ("260.00 1 шт =260.00", 1.0, 260.0),
+                       ("104.99 2 шт 209.98", 2.0, 209.98)]:
+        r = ocr.parse_receipt("Зефир Ванильный Вкус\n" + line + "\nИТОГО 260.00")
+        assert r["items"], (line, r)
+        it = r["items"][0]
+        assert it["qty"] == q and abs(it["sum"] - s) < 0.01, (line, it)
+check("форматы магазина (x / Ж / шт / =) работают", t_shop_fmt)
+
 print("\n===== ИТОГ =====")
 print(f"Пройдено: {len(PASS)}   Провалено: {len(FAIL)}")
 for n, e in FAIL:
