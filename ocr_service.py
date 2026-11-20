@@ -6,6 +6,8 @@ import logging
 import unicodedata
 from PIL import Image, ImageEnhance, ImageFilter
 
+
+
 try:
     import pytesseract
     pytesseract.pytesseract.tesseract_cmd = (
