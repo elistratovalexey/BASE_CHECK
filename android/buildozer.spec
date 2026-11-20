@@ -7,15 +7,16 @@ source.include_exts = py,png,jpg,kv,atlas,json,traineddata
 source.exclude_dirs = bin, .buildozer, __pycache__
 version = 1.5.0
 
-requirements = python3,kivy==2.3.0,pillow,openpyxl,et_xmlfile,pypdf,requests,certifi,urllib3,idna,charset-normalizer,pyjnius,android
+requirements = python3,kivy==2.3.0,pillow,openpyxl,et_xmlfile,pypdf,requests,pyjnius,android
 
 orientation = portrait
 fullscreen = 0
 
 android.api = 34
 android.minapi = 24
+android.ndk = 25b
 android.ndk_api = 24
-android.archs = arm64-v8a, armeabi-v7a
+android.archs = arm64-v8a
 android.allow_backup = True
 android.accept_sdk_license = True
 android.enable_androidx = True
