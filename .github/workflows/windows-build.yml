@@ -1,0 +1,54 @@
+name: Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt
+
+      - name: Install Tesseract + Inno Setup
+        run: |
+          choco install tesseract -y --no-progress
+          choco install innosetup -y --no-progress
+
+      - name: Prepare vendor (Tesseract + Poppler)
+        shell: pwsh
+        run: ./get_vendor.ps1
+
+      - name: Tests
+        run: python test_all.py
+
+      - name: Build exe
+        run: pyinstaller --noconfirm BASE_CHECK.spec
+
+      - name: Build installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BASE_CHECK-windows
+          path: |
+            dist/*.exe
+            dist/BASE_CHECK/**
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
