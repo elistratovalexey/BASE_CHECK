@@ -183,3 +183,13 @@ cloud_config.json
 cloud_state.json
 backups/
 vendor/
+cloud_config.json
+cloud_state.json
+backups/
+vendor/
+receipts.db
+android/.buildozer/
+android/bin/
+android/build.log
+!BASE_CHECK.spec
+!android/buildozer.spec
