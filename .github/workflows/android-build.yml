@@ -3,46 +3,91 @@ name: Android build
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
 
 jobs:
   apk:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
     env:
       PYTHONUTF8: "1"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost || true
+          df -h
 
       - name: System deps
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git zip unzip zlib1g-dev \
             libffi-dev libssl-dev autoconf automake libtool pkg-config cmake \
-            libncurses5 libtinfo5
+            libncurses5 libtinfo5 gettext
 
       - name: Buildozer
         run: |
           python -m pip install --upgrade pip wheel
-          pip install "cython<3.0" buildozer
+          pip install "cython<3.0" "buildozer==1.5.0"
 
-      - name: Prepare core + tessdata
+      - name: Cache buildozer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            android/.buildozer
+          key: buildozer-${{ hashFiles('android/buildozer.spec') }}
+          restore-keys: buildozer-
+
+      - name: Prepare core and tessdata
         run: bash android/prepare.sh
 
       - name: Build APK
+        shell: bash
         run: |
           cd android
-          buildozer -v android debug
+          set +e
+          buildozer android debug 2>&1 | tee build.log | grep --line-buffered -v '^\[DEBUG\]'
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "buildozer exit code: $rc"
+          if [ "$rc" -ne 0 ] || ! ls bin/*.apk >/dev/null 2>&1; then
+            echo "::group::Последние 300 строк лога"
+            tail -n 300 build.log
+            echo "::endgroup::"
+            echo "::group::Строки с ошибками"
+            grep -n -iE 'error:|fatal error|Traceback|FAILURE|BUILD FAILED|Command failed|No such file|undefined reference' build.log | tail -n 100 || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          ls -lh bin/
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: android/build.log
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: BASE_CHECK-android
           path: android/bin/*.apk
