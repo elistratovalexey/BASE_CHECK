@@ -7,6 +7,12 @@ from config import APP_TITLE, APP_VERSION
 
 
 def _setup_logging():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     handlers = [logging.FileHandler(paths.log_path(), encoding="utf-8")]
     if sys.stdout is not None:            # в оконном exe stdout отсутствует
         handlers.append(logging.StreamHandler(sys.stdout))
