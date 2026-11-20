@@ -1,0 +1,22 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 4, 0, 0),
+    prodvers=(1, 4, 0, 0),
+    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('041904B0', [
+        StringStruct('CompanyName', 'BASE_CHECK'),
+        StringStruct('FileDescription', 'Программа обработки чеков'),
+        StringStruct('FileVersion', '1.4.0.0'),
+        StringStruct('InternalName', 'BASE_CHECK'),
+        StringStruct('OriginalFilename', 'BASE_CHECK.exe'),
+        StringStruct('ProductName', 'Программа обработки чеков'),
+        StringStruct('ProductVersion', '1.4.0.0'),
+        StringStruct('LegalCopyright', 'Alex Elistratov')
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1049, 1200])])
+  ]
+)
