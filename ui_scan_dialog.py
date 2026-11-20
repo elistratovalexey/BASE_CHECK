@@ -255,7 +255,8 @@ class ScanDialog(QDialog):
                     from_text_layer = True
                 else:
                     from pdf2image import convert_from_path
-                    images = convert_from_path(path, dpi=300)
+                    import paths
+                    images = convert_from_path(path, dpi=300, poppler_path=paths.poppler_path())
                     if not images:
                         QMessageBox.critical(self, "Ошибка", "Не удалось извлечь изображение из PDF"); return
                     parts = []
