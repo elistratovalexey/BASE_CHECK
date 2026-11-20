@@ -16,6 +16,7 @@ from ui_scan_dialog import ScanDialog
 from ui_calculation_dialog import CalculationDialog
 import receipt_excel
 import logging
+from ui_cloud_dialog import CloudDialog
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class MainWindow(QMainWindow):
             ("Сканировать чек", self.scan_receipt),
             ("Рассчитать оплаты", self.calc_payments),
             ("В файл excel", self.export_excel),
+            ("Облако Mail.ru", self.open_cloud),
         ]
         for text, fn in buttons:
             b = QPushButton(text); b.clicked.connect(fn); btns.addWidget(b)
@@ -115,6 +117,26 @@ class MainWindow(QMainWindow):
         self.lbl_split.setStyleSheet("color: #555;")
         lay.addWidget(self.lbl_split)
 
+        self.lbl_cloud = QLabel("Облако: не настроено")
+        self.lbl_cloud.setAlignment(Qt.AlignRight)
+        self.lbl_cloud.setStyleSheet("color: #777;")
+        lay.addWidget(self.lbl_cloud)
+        
+    def open_cloud(self):
+        try:
+            CloudDialog(self).exec_()
+            mgr = getattr(self, "sync_manager", None)
+            if mgr:
+                mgr.reload()
+            self.refresh()
+        except Exception as e:
+            logger.exception(f"Ошибка окна облака: {e}")
+            QMessageBox.critical(self, "Ошибка", str(e))
+
+    def set_cloud_status(self, text):
+        if hasattr(self, "lbl_cloud"):
+            self.lbl_cloud.setText(f"Облако: {text}")
+            
     def _tick_clock(self):
         from PyQt5.QtCore import QDateTime
         self.lbl_clock.setText(QDateTime.currentDateTime().toString("dd-MM-yyyy HH:mm:ss"))

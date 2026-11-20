@@ -19,11 +19,11 @@ jobs:
           python-version: "3.12"
           architecture: "x64"
 
-      - name: Install deps
+       - name: Install deps
         run: |
           python -m pip install --upgrade pip wheel
-          pip install -r requirements.txt
-
+          pip install -r requirements-build.txt
+          
       - name: Install Tesseract + Inno Setup
         run: |
           choco install tesseract -y --no-progress

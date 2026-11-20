@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 HERE = os.path.abspath(SPECPATH)
 
@@ -12,6 +12,7 @@ for sub in ("vendor/tesseract", "vendor/poppler"):
         datas.append((p, sub.replace("/", os.sep)))
 if os.path.isdir(os.path.join(HERE, "assets")):
     datas.append((os.path.join(HERE, "assets"), "assets"))
+datas += collect_data_files("certifi")
 
 hiddenimports = [
     "PyQt5.QtCore", "PyQt5.QtGui", "PyQt5.QtWidgets", "PyQt5.sip",
@@ -20,6 +21,8 @@ hiddenimports = [
     "ui_main_window", "ui_scan_dialog", "ui_receipt_dialog",
     "ui_companies_dialog", "ui_items_dialog", "ui_payers_dialog", "ui_calculation_dialog",
     "pytesseract", "pdf2image", "pypdf", "PIL",
+    "cloud_config", "cloud_webdav", "cloud_sync", "cloud_autosync", "ui_cloud_dialog",
+    "requests", "certifi", "charset_normalizer", "idna", "urllib3",
 ] + collect_submodules("openpyxl")
 
 a = Analysis(

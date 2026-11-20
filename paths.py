@@ -25,6 +25,10 @@ def app_dir():
 
 def user_data_dir():
     """Каталог для БД и логов — всегда доступен на запись (не Program Files)."""
+    if "ANDROID_PRIVATE" in os.environ:          # <-- Android (python-for-android)
+        d = os.path.join(os.environ["ANDROID_PRIVATE"], APP_DIR_NAME)
+        os.makedirs(d, exist_ok=True)
+        return d
     if sys.platform.startswith("win"):
         root = os.environ.get("APPDATA") or os.path.expanduser("~")
     elif sys.platform == "darwin":

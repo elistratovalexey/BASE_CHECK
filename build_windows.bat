@@ -10,7 +10,7 @@ echo === 2/5 venv + deps ===
 if not exist .venv python -m venv .venv
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip wheel
-pip install -r requirements.txt || exit /b 1
+pip install -r requirements-build.txt || exit /b 1
 
 echo === 3/5 vendor (Tesseract + Poppler) ===
 powershell -NoProfile -ExecutionPolicy Bypass -File get_vendor.ps1
