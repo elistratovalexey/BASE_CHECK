@@ -3,8 +3,8 @@ name: Windows build
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
-
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -13,42 +13,52 @@ jobs:
       PYTHONUTF8: "1"
       PYTHONIOENCODING: "utf-8"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           architecture: "x64"
 
-          
-       - name: Install deps
+      - name: Install deps
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip wheel
-          pip install -r requirements-build.txt
-          
-      - name: Install Tesseract + Inno Setup
+          if (Test-Path requirements-build.txt) {
+            pip install -r requirements-build.txt
+          } else {
+            pip install -r requirements.txt
+            pip install "pyinstaller>=6.15.0"
+          }
+
+      - name: Install Tesseract and Inno Setup
+        shell: pwsh
         run: |
           choco install tesseract -y --no-progress
           choco install innosetup -y --no-progress
 
-      - name: Prepare vendor (Tesseract + Poppler)
+      - name: Prepare vendor
         shell: pwsh
         run: ./get_vendor.ps1
 
       - name: Tests
         shell: pwsh
         run: |
-          chcp 65001 > $null
+          chcp 65001 | Out-Null
           python test_all.py
 
       - name: Build exe
+        shell: pwsh
         run: pyinstaller --noconfirm BASE_CHECK.spec
 
       - name: Build installer
         shell: pwsh
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: BASE_CHECK-windows
           path: |
