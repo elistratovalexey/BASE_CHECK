@@ -8,14 +8,19 @@ from PIL import Image, ImageEnhance, ImageFilter
 
 
 
+import paths
+
 try:
     import pytesseract
-    pytesseract.pytesseract.tesseract_cmd = (
-        os.environ.get("TESSERACT_CMD") or shutil.which("tesseract") or "/usr/bin/tesseract"
-    )
+    _cmd = paths.tesseract_cmd()
+    if _cmd:
+        pytesseract.pytesseract.tesseract_cmd = _cmd
+    _td = paths.tessdata_dir()
+    if _td:
+        os.environ["TESSDATA_PREFIX"] = _td
 except ImportError:
     pytesseract = None
-
+    
 logger = logging.getLogger(__name__)
 
 MAX_TESSERACT_SIDE = 32000
