@@ -89,7 +89,11 @@ def extract_text_from_pdf(pdf_path: str):
 def _ocr_image(img):
     if pytesseract is None:
         raise RuntimeError("pytesseract не установлен. Установите pytesseract и tesseract-ocr-rus")
-    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 6 -l rus")
+    cfg = r"--oem 3 --psm 6 -l rus"
+    td = paths.tessdata_dir()
+    if td:
+        cfg += f' --tessdata-dir "{td}"'
+    return pytesseract.image_to_string(img, config=cfg)
 
 
 def _find_white_row(img, y_start, y_end):
