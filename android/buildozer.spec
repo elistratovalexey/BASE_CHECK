@@ -21,8 +21,13 @@ android.allow_backup = True
 android.accept_sdk_license = True
 android.enable_androidx = True
 android.permissions = INTERNET, ACCESS_NETWORK_STATE, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, READ_MEDIA_IMAGES
+
+# ГЛАВНОЕ ИСПРАВЛЕНИЕ: репозиторий JitPack для tesseract4android
+android.add_gradle_repositories = "maven { url 'https://jitpack.io' }"
 android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.7.0
+
 android.release_artifact = aab
+android.debug_artifact = apk
 
 [buildozer]
 log_level = 2
