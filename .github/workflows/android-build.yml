@@ -57,27 +57,23 @@ jobs:
 
       - name: Prepare core and tessdata
         run: bash android/prepare.sh
-
       - name: Build APK
         shell: bash
         run: |
           cd android
           set +e
-          buildozer android debug 2>&1 | tee build.log | grep --line-buffered -v '^\[DEBUG\]'
-          rc=${PIPESTATUS[0]}
+          buildozer android debug > build.log 2>&1
+          rc=$?
           set -e
-          echo "buildozer exit code: $rc"
-          if [ "$rc" -ne 0 ] || ! ls bin/*.apk >/dev/null 2>&1; then
-            echo "::group::Последние 300 строк лога"
-            tail -n 300 build.log
-            echo "::endgroup::"
-            echo "::group::Строки с ошибками"
-            grep -n -iE 'error:|fatal error|Traceback|FAILURE|BUILD FAILED|Command failed|No such file|undefined reference' build.log | tail -n 100 || true
-            echo "::endgroup::"
-            exit 1
-          fi
-          ls -lh bin/
-
+          echo "=== exit code: $rc ==="
+          df -h | head -3
+          echo "=== ПОСЛЕДНИЕ 150 СТРОК ==="
+          tail -n 150 build.log
+          echo "=== ОШИБКИ ==="
+          grep -a -n -iE 'error:|fatal|Traceback|FAILURE|BUILD FAILED|Could not (find|resolve)|undefined reference' build.log | tail -n 80 || true
+          ls -lh bin/ 2>/dev/null || echo "bin/ пуст"
+          [ "$rc" -eq 0 ] && ls bin/*.apk >/dev/null 2>&1
+      
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
