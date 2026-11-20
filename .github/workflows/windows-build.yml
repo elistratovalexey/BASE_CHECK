@@ -3,8 +3,25 @@ name: Windows build
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "*.py"
+      - "*.spec"
+      - "installer.iss"
+      - "requirements*.txt"
+      - "get_vendor.ps1"
+      - ".github/workflows/windows-build.yml"
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
 
 jobs:
   build:
