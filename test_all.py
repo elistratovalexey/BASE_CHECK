@@ -3,6 +3,13 @@ import os, sys, sqlite3, tempfile, traceback
 HERE = os.path.dirname(os.path.abspath(__file__)); os.chdir(HERE); sys.path.insert(0, HERE)
 PASS, FAIL = [], []
 
+# --- Windows: консоль может быть cp1252 -> принудительно UTF-8 ---
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 def check(name, fn):
     try:
         fn(); PASS.append(name); print(f"  ✅ {name}")
