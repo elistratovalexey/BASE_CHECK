@@ -49,11 +49,10 @@ jobs:
           sudo apt-get install -y build-essential git zip unzip zlib1g-dev \
             libffi-dev libssl-dev autoconf automake libtool pkg-config cmake \
             libncurses5 libtinfo5 gettext
-
       - name: Buildozer
         run: |
           python -m pip install --upgrade pip wheel
-          pip install "cython<3.0" "buildozer==1.5.0"
+          pip install "cython==0.29.36" "buildozer==1.5.0"
 
       - name: Cache buildozer
         uses: actions/cache@v4
@@ -61,8 +60,7 @@ jobs:
           path: |
             ~/.buildozer
             android/.buildozer
-          key: buildozer-${{ hashFiles('android/buildozer.spec') }}
-          restore-keys: buildozer-
+          key: buildozer-p4a20240121-${{ hashFiles('android/buildozer.spec') }}
 
       - name: Prepare core and tessdata
         run: bash android/prepare.sh
