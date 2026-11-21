@@ -54,8 +54,8 @@ class WebDav:
         if r.status_code in (200, 207):
             return True
         if r.status_code in (401, 403):
-            raise WebDavError("Отказано в доступе (401/403). Нужен пароль для внешних приложений.")
-        raise WebDavError(f"PROPFIND / -> {r.status_code}")
+            raise WebDavError("401/403: нужен пароль для внешних приложений, а не пароль от почты")
+        raise WebDavError(f"PROPFIND / -> {r.status_code}: {r.text[:200]}")
 
     def ensure_folder(self, path):
         cur = ""
