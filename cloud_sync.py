@@ -112,40 +112,87 @@ def validate_db(data):
         except OSError:
             pass
 
+def _ensure_private_dir(path):
+    os.makedirs(path, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
 
 def backup_local_db():
+    """Создаёт локальную резервную копию перед заменой базы."""
     src = paths.db_path()
     if not os.path.isfile(src):
         return None
+
     d = os.path.join(paths.user_data_dir(), BACKUP_DIR)
-    os.makedirs(d, exist_ok=True)
+    _ensure_private_dir(d)
+
     dst = os.path.join(d, f"receipts_{_stamp()}.db")
-    shutil.copy2(src, dst)
+
+    # Копируем через SQLite backup API, а не shutil.copy2:
+    # так снимок согласованный и без проблем с правами/атрибутами.
+    s = sqlite3.connect(src)
+    t = sqlite3.connect(dst)
+    try:
+        s.backup(t)
+    finally:
+        t.close()
+        s.close()
+
+    try:
+        os.chmod(dst, 0o600)
+    except OSError:
+        pass
+
     files = sorted(f for f in os.listdir(d) if f.endswith(".db"))
     for f in files[:-20]:
         try:
             os.unlink(os.path.join(d, f))
         except OSError:
             pass
+
     return dst
 
 
 def replace_db(data):
+    """Заменяет локальную базу данными из облака."""
     if not validate_db(data):
         raise WebDavError("Файл базы в облаке повреждён или не является базой программы")
+
     backup_local_db()
+
     dst = paths.db_path()
-    fd, tmp = tempfile.mkstemp(suffix=".db", dir=os.path.dirname(dst))
+    dst_dir = os.path.dirname(dst)
+    _ensure_private_dir(dst_dir)
+
+    fd, tmp = tempfile.mkstemp(suffix=".db", dir=dst_dir)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+
         os.replace(tmp, dst)
+
+        try:
+            os.chmod(dst, 0o600)
+        except OSError:
+            pass
+
     finally:
         if os.path.exists(tmp):
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
+
     return True
 
 
