@@ -38,20 +38,25 @@ def config_path():
     return os.path.join(paths.user_data_dir(), FILE_NAME)
 
 
+
 def _harden(path):
     try:
         os.chmod(path, 0o600)
     except OSError:
         pass
+
     if sys.platform.startswith("win"):
         try:
             user = os.environ.get("USERNAME") or ""
             if user:
-                subprocess.run(["icacls", path, "/inheritance:r", "/grant:r", f"{user}:F"],
-                               capture_output=True, timeout=15, creationflags=0x08000000)
+                subprocess.run(
+                    ["icacls", path, "/inheritance:r", "/grant:r", f"{user}:F"],
+                    capture_output=True,
+                    timeout=15,
+                    creationflags=0x08000000,
+                )
         except Exception:
             pass
-
 
 def load():
     cfg = dict(DEFAULTS)
