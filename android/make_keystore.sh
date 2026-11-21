@@ -8,6 +8,11 @@ ALIAS="basecheck"
 PASS="basecheck"          # пароль не секрет: секретом является сам файл ключа
 
 mkdir -p "$KS_DIR"
+# если ключ уже сохранён в репозитории — берём его
+if [ ! -f "$KS" ] && [ -f "$(dirname "$0")/basecheck.keystore" ]; then
+  cp "$(dirname "$0")/basecheck.keystore" "$KS"
+  chmod 600 "$KS" || true
+fi
 
 NEW_KEY=0
 if [ ! -f "$KS" ]; then
