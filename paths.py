@@ -24,17 +24,26 @@ def app_dir():
 
 
 def user_data_dir():
-    """Каталог для БД и логов — всегда доступен на запись (не Program Files)."""
-    if "ANDROID_PRIVATE" in os.environ:          # <-- Android (python-for-android)
-        d = os.path.join(os.environ["ANDROID_PRIVATE"], APP_DIR_NAME)
+    """Каталог для БД и логов — всегда доступен на запись."""
+    if "ANDROID_PRIVATE" in os.environ:
+        # python-for-android даёт приватный каталог приложения:
+        # /data/user/0/<package>/files
+        root = os.environ["ANDROID_PRIVATE"]
+        d = os.path.join(root, APP_DIR_NAME)
         os.makedirs(d, exist_ok=True)
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
         return d
+
     if sys.platform.startswith("win"):
         root = os.environ.get("APPDATA") or os.path.expanduser("~")
     elif sys.platform == "darwin":
         root = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
     else:
         root = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+
     d = os.path.join(root, APP_DIR_NAME)
     os.makedirs(d, exist_ok=True)
     return d
