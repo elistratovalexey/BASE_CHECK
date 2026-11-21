@@ -5,7 +5,8 @@ package.domain = ru.elistratov
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,traineddata
 source.exclude_dirs = bin, .buildozer, __pycache__
-version = 1.5.0
+version.regex = APP_VERSION\s*=\s*['"]([^'"]+)['"]
+version.filename = %(source.dir)s/config.py
 
 p4a.branch = master
 p4a.commit = v2024.01.21
