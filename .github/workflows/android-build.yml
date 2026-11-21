@@ -64,6 +64,18 @@ jobs:
       - name: Signing key (auto)
         shell: bash
         run: bash android/make_keystore.sh
+        
+      - name: Persist signing key
+        shell: bash
+        run: |
+          if [ ! -f android/basecheck.keystore ]; then
+            cp ~/.android-basecheck/basecheck.keystore android/basecheck.keystore
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add android/basecheck.keystore
+            git commit -m "ci: постоянный ключ подписи Android [skip ci]"
+            git push
+          fi
 
       - name: Cache buildozer
         uses: actions/cache@v4
