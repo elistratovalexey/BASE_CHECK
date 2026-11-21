@@ -49,10 +49,22 @@ jobs:
           sudo apt-get install -y build-essential git zip unzip zlib1g-dev \
             libffi-dev libssl-dev autoconf automake libtool pkg-config cmake \
             libncurses5 libtinfo5 gettext
+
       - name: Buildozer
         run: |
           python -m pip install --upgrade pip wheel
           pip install "cython==0.29.36" "buildozer==1.5.0"
+
+      # --- КЛЮЧ ПОДПИСИ: создаётся сам при первой сборке и хранится в кэше ---
+      - name: Cache signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android-basecheck
+          key: basecheck-signing-key-v1
+
+      - name: Signing key (auto)
+        shell: bash
+        run: bash android/make_keystore.sh
 
       - name: Cache buildozer
         uses: actions/cache@v4
@@ -64,23 +76,40 @@ jobs:
 
       - name: Prepare core and tessdata
         run: bash android/prepare.sh
+
+      - name: Version code
+        shell: bash
+        run: |
+          python - <<'PYEOF'
+          import os, re, pathlib
+          cfg = pathlib.Path("config.py").read_text(encoding="utf-8")
+          ver = re.search(r'APP_VERSION\s*=\s*[\'"]([^\'"]+)[\'"]', cfg).group(1)
+          a, b, c = (ver.split(".") + ["0", "0"])[:3]
+          run = int(os.environ.get("GITHUB_RUN_NUMBER", "1"))
+          code = int(a) * 10000000 + int(b) * 100000 + int(c) * 1000 + run % 1000
+          p = pathlib.Path("android/buildozer.spec")
+          s = p.read_text(encoding="utf-8")
+          s = re.sub(r'(?m)^android\.numeric_version\s*=.*$',
+                     f'android.numeric_version = {code}', s)
+          p.write_text(s, encoding="utf-8")
+          print(f"versionName={ver}  versionCode={code}")
+          PYEOF
+
       - name: Build APK
         shell: bash
         run: |
           cd android
           set +e
-          buildozer android debug > build.log 2>&1
+          buildozer android "$BUILD_MODE" > build.log 2>&1
           rc=$?
           set -e
-          echo "=== exit code: $rc ==="
-          df -h | head -3
-          echo "=== ПОСЛЕДНИЕ 150 СТРОК ==="
-          tail -n 150 build.log
+          echo "=== mode=$BUILD_MODE exit=$rc ==="
+          tail -n 120 build.log
           echo "=== ОШИБКИ ==="
-          grep -a -n -iE 'error:|fatal|Traceback|FAILURE|BUILD FAILED|Could not (find|resolve)|undefined reference' build.log | tail -n 80 || true
+          grep -a -n -iE 'error:|fatal|Traceback|FAILURE|BUILD FAILED|Could not (find|resolve)' build.log | tail -n 60 || true
           ls -lh bin/ 2>/dev/null || echo "bin/ пуст"
           [ "$rc" -eq 0 ] && ls bin/*.apk >/dev/null 2>&1
-      
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
