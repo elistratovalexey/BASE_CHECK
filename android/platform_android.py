@@ -220,7 +220,35 @@ def save_to_downloads(filename, data,
     with open(p, "wb") as f:
         f.write(data)
     return p
+                          
+def storage_diagnostics():
+    import paths
 
+    root = data_dir()
+    udd = paths.user_data_dir()
+    dbp = paths.db_path()
+    bkp = os.path.join(udd, "backups")
+
+    lines = [
+        f"ANDROID_PRIVATE={os.environ.get('ANDROID_PRIVATE')}",
+        f"data_dir={root}",
+        f"user_data_dir={udd}",
+        f"db_path={dbp}",
+        f"backups={bkp}",
+    ]
+
+    for p in (root, udd, bkp):
+        try:
+            os.makedirs(p, exist_ok=True)
+            test = os.path.join(p, ".write_test")
+            with open(test, "wb") as f:
+                f.write(b"ok")
+            os.unlink(test)
+            lines.append(f"OK write: {p}")
+        except Exception as e:
+            lines.append(f"FAIL write: {p} -> {e}")
+
+    return "\n".join(lines)
 
 def toast(text):
     if not IS_ANDROID:
