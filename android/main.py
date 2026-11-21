@@ -680,9 +680,8 @@ class CloudScreen(Base):
 
 
 # ============================ ПРИЛОЖЕНИЕ ============================
-
 class BaseCheckApp(App):
-    title = APP_TITLE
+    title = f"{APP_TITLE} v{APP_VERSION}"
 
     def build(self):
         Window.softinput_mode = "below_target"
@@ -692,6 +691,11 @@ class BaseCheckApp(App):
         # OCR на Android — через tesseract4android вместо CLI
         if pa.IS_ANDROID:
             ocr_service._ocr_image = lambda img: pa.ocr_bitmap(img)
+
+        self._sync_lock = threading.Lock()
+        self._periodic_ev = None
+        self.cloud_status = "облако: —"
+
         self.sm = ScreenManager()
         self.sm.add_widget(ReceiptsScreen(name="receipts"))
         self.sm.add_widget(ReceiptScreen(name="receipt"))
@@ -702,64 +706,134 @@ class BaseCheckApp(App):
         self.sm.current = "receipts"
         return self.sm
 
+    # ---------- статус ----------
+    def set_cloud_status(self, text):
+        self.cloud_status = "облако: " + text
+        try:
+            s = self.sm.get_screen("receipts")
+            if hasattr(s, "lbl_cloud"):
+                s.lbl_cloud.text = self.cloud_status
+        except Exception:
+            pass
+
     def refresh_all(self):
         for name in ("receipts", "dirs", "calc"):
             s = self.sm.get_screen(name)
             if hasattr(s, "reload"):
-                s.reload()
+                try:
+                    s.reload()
+                except Exception as e:
+                    log.warning("refresh %s: %s", name, e)
+        if self.sm.current == "receipt":
+            s = self.sm.get_screen("receipt")
+            if s.rid and any(r["id"] == s.rid for r in db.fetch_all("receipts")):
+                s.load(s.rid)
+            else:
+                self.sm.current = "receipts"
+        try:
+            self.sm.get_screen("receipts").lbl_cloud.text = self.cloud_status
+        except Exception:
+            pass
 
-    def _sync_bg(self, mode):
+    # ---------- синхронизация ----------
+    def _do_sync(self, mode, timeout, retries):
+        """Синхронная синхронизация. Не запускается параллельно сама с собой."""
         cfg = cloud_config.load()
         if not cloud_config.is_configured(cfg):
-            return
-
-        def work():
+            return {"action": "skip"}
+        if not self._sync_lock.acquire(blocking=False):
+            return {"action": "busy"}
+        s = None
+        try:
             s = cloud_sync.CloudSync(cfg)
-            try:
-                s.dav.timeout = 60
-                return s.push() if mode == "push" else s.sync()
-            finally:
+            s.dav.timeout = timeout
+            s.dav.retries = retries
+            if mode == "push":
+                res = s.push()
+            elif mode == "pull":
+                res = s.pull()
+            else:
+                res = s.sync()
+            log.info("Синхронизация %s: %s", mode, res)
+            return res
+        except Exception as e:
+            log.warning("Синхронизация %s не удалась: %s", mode, e)
+            return {"action": "error", "error": str(e)}
+        finally:
+            if s:
                 s.close()
+            self._sync_lock.release()
+
+    def _sync_bg(self, mode="auto", timeout=45, retries=2):
+        """Асинхронно — для входа в приложение и таймера."""
+        def work():
+            return self._do_sync(mode, timeout, retries)
 
         def done(res, err):
-            if err:
-                log.warning("Синхронизация: %s", err)
+            res = res or {}
+            act = res.get("action")
+            if err or act == "error":
+                self.set_cloud_status("ошибка — " + str(err or res.get("error"))[:70])
                 return
-            log.info("Синхронизация %s: %s", mode, res)
-            self.refresh_all()
-            if res and res.get("action") in ("pull", "conflict"):
+            if act == "skip":
+                self.set_cloud_status("не настроено")
+                return
+            if act == "busy":
+                return
+            if act in ("pull", "conflict"):
+                self.refresh_all()
                 pa.toast("База обновлена из облака")
+            if act == "conflict":
+                info("Конфликт версий",
+                     "База менялась и здесь, и в облаке.\n"
+                     "Ваша версия сохранена в облако (history/conflict_…db),\n"
+                     "рабочей стала облачная версия.")
+            self.set_cloud_status(f"{act} · {time.strftime('%H:%M:%S')}")
         run_bg(work, done)
 
+    def restart_autosync(self):
+        if self._periodic_ev is not None:
+            try:
+                self._periodic_ev.cancel()
+            except Exception:
+                pass
+            self._periodic_ev = None
+        cfg = cloud_config.load()
+        if cfg.get("autosync") and cloud_config.is_configured(cfg):
+            period = max(60, int(cfg.get("interval_min", 15)) * 60)
+            self._periodic_ev = Clock.schedule_interval(
+                lambda *_: self._sync_bg("auto"), period)
+
+    # ---------- жизненный цикл ----------
     def on_start(self):
         cfg = cloud_config.load()
-        if cfg.get("sync_on_start"):
-            self._sync_bg("auto")
-        if cfg.get("autosync"):
-            Clock.schedule_interval(lambda *_: self._sync_bg("auto"),
-                                    max(60, int(cfg.get("interval_min", 15)) * 60))
+        if cloud_config.is_configured(cfg):
+            self.set_cloud_status("подключено")
+            if cfg.get("sync_on_start", True):
+                self._sync_bg("auto")          # ВХОД: тянем свежую базу
+        else:
+            self.set_cloud_status("не настроено")
+        self.restart_autosync()
 
     def on_pause(self):
+        # ВЫХОД (свернули/переключились): только СИНХРОННО,
+        # процесс могут убить сразу после возврата из этого метода.
         cfg = cloud_config.load()
-        if cfg.get("sync_on_exit"):
-            self._sync_bg("push")
+        if cfg.get("sync_on_exit", True):
+            self._do_sync("auto", timeout=6, retries=1)
         return True
 
     def on_resume(self):
         cfg = cloud_config.load()
-        if cfg.get("sync_on_start"):
-            self._sync_bg("auto")
+        if cfg.get("sync_on_start", True):
+            self._sync_bg("auto")              # ВХОД из фона
+        self.restart_autosync()
 
     def on_stop(self):
+        # вызывается редко (закрытие кнопкой «Назад»), но тоже синхронно
         cfg = cloud_config.load()
-        if cfg.get("sync_on_exit"):
-            try:
-                s = cloud_sync.CloudSync(cfg)
-                s.dav.timeout = 30
-                s.sync()
-                s.close()
-            except Exception as e:
-                log.warning("Синхронизация при выходе: %s", e)
+        if cfg.get("sync_on_exit", True):
+            self._do_sync("auto", timeout=6, retries=1)
 
 
 if __name__ == "__main__":
