@@ -6,6 +6,9 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,traineddata
 source.exclude_dirs = bin, .buildozer, __pycache__
 version = 1.5.0
+# Фиксируем python-for-android на релизе, где Python = 3.11.5 (совместим с Kivy 2.3.0)
+p4a.branch = master
+p4a.commit = v2024.01.21
 
 requirements = python3,kivy==2.3.0,pillow,openpyxl,et_xmlfile,pypdf,requests,pyjnius,android
 
