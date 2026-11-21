@@ -173,6 +173,10 @@ class ReceiptsScreen(Base):
         self.root_box.add_widget(self.rv)
         self.status = Label(text="", size_hint_y=None, height=dp(24))
         self.root_box.add_widget(self.status)
+        self.lbl_cloud = Label(text="облако: —", size_hint_y=None, height=dp(22),
+                               halign="left")
+        self.lbl_cloud.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
+        self.root_box.add_widget(self.lbl_cloud)  
         g = GridLayout(cols=3, size_hint_y=None, height=dp(150), spacing=dp(4))
         for t, fn in (("Новый чек", self.new_receipt), ("Сканировать", self.go_scan),
                       ("Справочники", self.go_dirs), ("Расчёт оплат", self.go_calc),
