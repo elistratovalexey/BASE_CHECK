@@ -28,8 +28,10 @@ android.permissions = INTERNET, ACCESS_NETWORK_STATE, READ_EXTERNAL_STORAGE, WRI
 
 android.gradle_dependencies = cz.adaptech.tesseract4android:tesseract4android:4.7.0
 
-android.release_artifact = aab
+
+android.release_artifact = apk
 android.debug_artifact = apk
+android.numeric_version = 10000000
 
 [buildozer]
 log_level = 2
