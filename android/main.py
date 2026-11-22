@@ -566,8 +566,8 @@ class ScanScreen(Base):
         g.add_widget(btn("Сохранить чек", self.save))
         g.add_widget(btn("Отмена", lambda: setattr(self.manager, "current", "receipts")))
         self.root_box.add_widget(g)
-    
-        def pick(self, mime):
+
+    def pick(self, mime):
         self.status.text = "Открываю выбор файла…"
         pa.pick_file(self.on_file, mime)
 
@@ -581,9 +581,7 @@ class ScanScreen(Base):
                            "(см. «Облако → Диагностика»).")
             return
         self.status.text = "Распознавание…"
-        # ... дальше существующий код с work()/done() без изменений
 
- 
         def work():
             texts = []
             if path.lower().endswith(".pdf"):
@@ -599,7 +597,6 @@ class ScanScreen(Base):
                 texts.append(pa.ocr_image_file(path) if pa.IS_ANDROID
                              else ocr_service.extract_text(path))
             return ocr_service.parse_receipt("\n".join(texts))
-                  
 
         def done(res, err):
             if err:
