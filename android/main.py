@@ -573,7 +573,7 @@ class ScanScreen(Base):
             return
         self.status.text = "Распознавание…"
 
-                def work():
+        def work():
             texts = []
             if path.lower().endswith(".pdf"):
                 t = ocr_service.extract_text_from_pdf(path)
