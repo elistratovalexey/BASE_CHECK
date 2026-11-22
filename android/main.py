@@ -875,7 +875,7 @@ class BaseCheckApp(App):
             self.set_cloud_status("не настроено")
         self.restart_autosync()
 
-       def on_pause(self):
+    def on_pause(self):
         try:
             if getattr(pa, "PICKING", False):
                 return True            # открыт системный выбор файла — синхронизацию пропускаем
