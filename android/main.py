@@ -399,54 +399,99 @@ class ReceiptScreen(Base):
 
 
 class DirsScreen(Base):
-    TABLES = {"Компании": "companies", "Плательщики": "payers", "Наименования": "item_names"}
+    TABLES = {"Компании": "companies", "Плательщики": "payers", "Номенклатура": "item_names"}
 
     def __init__(self, **kw):
         super().__init__(**kw)
         self.rows = []
+        self.selected = None
+        self.cur_table = "Компании"
         self.header("Справочники", back=lambda: setattr(self.manager, "current", "receipts"))
-        self.sp = spinner(list(self.TABLES))
-        self.sp.bind(text=lambda *_: self.reload())
-        self.root_box.add_widget(self.sp)
+
+        tabs = GridLayout(cols=3, size_hint_y=None, height=dp(50), spacing=dp(4))
+        self.tab_btns = {}
+        for name in self.TABLES:
+            b = Button(text=name, size_hint_y=None, height=dp(50))
+            b.bind(on_release=lambda _b, n=name: self.switch(n))
+            tabs.add_widget(b)
+            self.tab_btns[name] = b
+        self.root_box.add_widget(tabs)
+
         self.rv = scroll_list()
         self.root_box.add_widget(self.rv)
-        g = GridLayout(cols=2, size_hint_y=None, height=dp(50), spacing=dp(4))
+
+        self.status = Label(text="", size_hint_y=None, height=dp(26), halign="left")
+        self.status.bind(width=lambda i, w: setattr(i, "text_size", (w, None)))
+        self.root_box.add_widget(self.status)
+
+        g = GridLayout(cols=3, size_hint_y=None, height=dp(50), spacing=dp(4))
         g.add_widget(btn("Добавить", self.add))
-        g.add_widget(btn("Удалить выбранный", self.delete_selected))
+        g.add_widget(btn("Переименовать", self.rename))
+        g.add_widget(btn("Удалить", self.delete_selected))
         self.root_box.add_widget(g)
+        self.switch("Компании")
+
+    def switch(self, name):
+        self.cur_table = name
         self.selected = None
+        for n, b in self.tab_btns.items():
+            b.background_color = (0.30, 0.55, 0.90, 1) if n == name else (1, 1, 1, 1)
+        self.reload()
 
     def on_pre_enter(self, *a):
         self.reload()
 
     def reload(self):
-        self.rows = db.fetch_all(self.TABLES[self.sp.text])
+        self.rows = db.fetch_all(self.TABLES[self.cur_table])
         self.rv.data = [{"text": r["name"], "owner": self, "idx": i, "halign": "left"}
                         for i, r in enumerate(self.rows)]
+        self.status.text = f"{self.cur_table}: {len(self.rows)} записей"
 
     def on_row(self, idx):
-        self.selected = self.rows[idx]
-        pa.toast("Выбрано: " + self.rows[idx]["name"])
+        if 0 <= idx < len(self.rows):
+            self.selected = self.rows[idx]
+            self.status.text = "Выбрано: " + self.selected["name"]
 
-    def add(self):
+    def _edit(self, title, value, on_ok):
         box = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(8))
-        ed = field("", "Наименование")
+        ed = field(value, "Наименование")
         box.add_widget(ed)
-        p = popup("Добавить", box, (0.9, 0.4))
+        p = popup(title, box, (0.92, 0.42))
 
         def ok():
-            if ed.text.strip():
-                db.insert(self.TABLES[self.sp.text], {"name": ed.text.strip()})
+            t = ed.text.strip()
+            if t:
+                try:
+                    on_ok(t)
+                except Exception as e:
+                    info("Ошибка", str(e))
             p.dismiss()
             self.reload()
         box.add_widget(btn("Сохранить", ok))
+        box.add_widget(btn("Отмена", p.dismiss))
+
+    def add(self):
+        self._edit(f"Добавить в «{self.cur_table}»", "",
+                   lambda t: db.insert(self.TABLES[self.cur_table], {"name": t}))
+
+    def rename(self):
+        if not self.selected:
+            pa.toast("Сначала выберите запись в списке")
+            return
+        self._edit("Переименовать", self.selected["name"],
+                   lambda t: db.update(self.TABLES[self.cur_table], self.selected["id"], {"name": t}))
 
     def delete_selected(self):
-        if self.selected:
-            db.delete(self.TABLES[self.sp.text], self.selected["id"])
-            self.selected = None
-            self.reload()
-
+        if not self.selected:
+            pa.toast("Сначала выберите запись в списке")
+            return
+        try:
+            db.delete(self.TABLES[self.cur_table], self.selected["id"])
+        except Exception as e:
+            info("Ошибка", str(e))
+        self.selected = None
+        self.reload()
+      
 
 class CalcScreen(Base):
     def __init__(self, **kw):
