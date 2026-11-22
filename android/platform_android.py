@@ -100,7 +100,7 @@ def pick_file(callback, mime="*/*"):
     """Системный выбор файла. callback(local_path или None). Никогда не бросает."""
     global PICKING, LAST_PICK_ERROR
     LAST_PICK_ERROR = ""
-    _log_pick("=== старт, mime=%s, IS_ANDROID=%s ===" % (mime, IS_ANDROID))
+    _log_pick("=== старт, mime=%s ===" % mime)
 
     if not IS_ANDROID:
         try:
@@ -122,34 +122,26 @@ def pick_file(callback, mime="*/*"):
         _ui(lambda: callback(None))
 
     try:
-        from jnius import autoclass
-        from android import activity
+        from jnius import autoclass, PythonJavaClass, java_method, cast
         from android.runnable import run_on_ui_thread
-    except Exception as e:
-        fail("Нет модулей Android (jnius/activity/runnable): %s" % e)
-        return
-
-    try:
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
         Intent = autoclass("android.content.Intent")
         act = PythonActivity.mActivity
         if act is None:
-            fail("Activity не готова (mActivity is None)")
+            fail("Activity не готова")
             return
         _log_pick("activity OK")
     except Exception as e:
         fail("JNI: %s" % e)
         return
 
-    def on_result(requestCode, resultCode, data):
+    holder = {}
+
+    def handle(requestCode, resultCode, data):
         global PICKING
         if requestCode != REQ_PICK:
             return
-        _log_pick("on_result: code=%s" % resultCode)
-        try:
-            activity.unbind(onActivityResult=on_result)
-        except Exception:
-            pass
+        _log_pick("result code=%s" % resultCode)
         PICKING = False
         try:
             if resultCode != -1 or data is None:
@@ -174,12 +166,46 @@ def pick_file(callback, mime="*/*"):
             _save_error("Обработка выбора", e)
             fail(e)
 
+    # --- способ 1: современный интерфейс p4a ---
+    registered = False
     try:
-        activity.bind(onActivityResult=on_result)
-        _log_pick("bind OK")
+        Iface = autoclass("org.kivy.android.PythonActivity$ActivityResultListener")
+
+        class Listener(PythonJavaClass):
+            __javainterfaces__ = ["org/kivy/android/PythonActivity$ActivityResultListener"]
+
+            @java_method("(IILandroid/content/Intent;)V")
+            def onActivityResult(self, requestCode, resultCode, data):
+                handle(requestCode, resultCode, data)
+
+        lst = Listener()
+        holder["listener"] = lst
+        act.registerActivityResultListener(lst)
+        registered = True
+        _log_pick("registerActivityResultListener OK")
     except Exception as e:
-        fail("activity.bind: %s" % e)
-        return
+        _log_pick("способ 1 не подошёл: %s" % e)
+
+    # --- способ 2: старый android.activity с другим именем события ---
+    if not registered:
+        try:
+            from android import activity as _act_mod
+            for ev in ("on_activity_result", "onActivityResult", "activity_result"):
+                try:
+                    _act_mod.bind(**{ev: handle})
+                    holder["unbind"] = (ev, _act_mod)
+                    registered = True
+                    _log_pick("activity.bind(%s) OK" % ev)
+                    break
+                except Exception as e2:
+                    _log_pick("bind(%s): %s" % (ev, e2))
+        except Exception as e:
+            _log_pick("android.activity недоступен: %s" % e)
+
+    # --- способ 3: без слушателя — опрос результата через onResume ---
+    if not registered:
+        _log_pick("работаем без слушателя (режим опроса)")
+        holder["poll"] = True
 
     PICKING = True
 
@@ -193,7 +219,7 @@ def pick_file(callback, mime="*/*"):
             act.startActivityForResult(i, REQ_PICK)
             _log_pick("OPEN_DOCUMENT отправлен")
         except Exception as e1:
-            _log_pick("OPEN_DOCUMENT не сработал: %s" % e1)
+            _log_pick("OPEN_DOCUMENT: %s" % e1)
             try:
                 j = Intent(Intent.ACTION_GET_CONTENT)
                 j.addCategory(Intent.CATEGORY_OPENABLE)
