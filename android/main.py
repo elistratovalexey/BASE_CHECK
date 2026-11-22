@@ -573,18 +573,22 @@ class ScanScreen(Base):
             return
         self.status.text = "Распознавание…"
 
-        def work():
+                def work():
+            texts = []
             if path.lower().endswith(".pdf"):
-                text = ocr_service.extract_text_from_pdf(path)
-                if not text:
-                    parts = []
-                    if pa.IS_ANDROID:
-                        for bmp in pa.render_pdf_bitmaps(path):
-                            parts.append(pa.ocr_bitmap(bmp))
-                    text = "\n".join(parts)
+                t = ocr_service.extract_text_from_pdf(path)
+                if t:
+                    texts.append(t)                     # электронный PDF — OCR не нужен
+                elif pa.IS_ANDROID:
+                    for bmp in pa.iter_pdf_bitmaps(path):
+                        texts.append(pa.ocr_bitmap(bmp))
+                else:
+                    texts.append(ocr_service.extract_text(path))
             else:
-                text = pa.ocr_image_file(path) if pa.IS_ANDROID else ocr_service.extract_text(path)
-            return ocr_service.parse_receipt(text or "")
+                texts.append(pa.ocr_image_file(path) if pa.IS_ANDROID
+                             else ocr_service.extract_text(path))
+            return ocr_service.parse_receipt("\n".join(texts))
+                  
 
         def done(res, err):
             if err:
@@ -860,14 +864,17 @@ class BaseCheckApp(App):
             self.set_cloud_status("не настроено")
         self.restart_autosync()
 
-    def on_pause(self):
-        # ВЫХОД (свернули/переключились): только СИНХРОННО,
-        # процесс могут убить сразу после возврата из этого метода.
-        cfg = cloud_config.load()
-        if cfg.get("sync_on_exit", True):
-            self._do_sync("auto", timeout=6, retries=1)
+       def on_pause(self):
+        try:
+            if getattr(pa, "PICKING", False):
+                return True            # открыт системный выбор файла — синхронизацию пропускаем
+            cfg = cloud_config.load()
+            if cfg.get("sync_on_exit", True):
+                self._do_sync("auto", timeout=4, retries=1)
+        except Exception as e:
+            log.warning("on_pause: %s", e)
         return True
-
+         
     def on_resume(self):
         cfg = cloud_config.load()
         if cfg.get("sync_on_start", True):
