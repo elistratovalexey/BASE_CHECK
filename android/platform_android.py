@@ -75,7 +75,8 @@ def request_perms():
 
 # ---------- выбор файла ----------
 def pick_file(callback, mime="*/*"):
-    """Открывает системный выбор файла; callback(local_path или None)."""
+    """Системный выбор файла; callback(local_path или None). Никогда не бросает исключение."""
+    global PICKING
     if not IS_ANDROID:
         try:
             import tkinter as tk
@@ -87,56 +88,90 @@ def pick_file(callback, mime="*/*"):
         except Exception:
             callback(None)
         return
-    from jnius import autoclass
-    from android import activity
-    PythonActivity = autoclass("org.kivy.android.PythonActivity")
-    Intent = autoclass("android.content.Intent")
-    act = PythonActivity.mActivity
 
-    def on_result(requestCode, resultCode, data):
-        if requestCode != REQ_PICK:
-            return
-        activity.unbind(onActivityResult=on_result)
-        try:
-            if resultCode != -1 or data is None:
-                callback(None)
+    try:
+        from jnius import autoclass
+        from android import activity
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        Intent = autoclass("android.content.Intent")
+        act = PythonActivity.mActivity
+
+        def on_result(requestCode, resultCode, data):
+            global PICKING
+            if requestCode != REQ_PICK:
                 return
-            callback(_copy_uri(data.getData()))
-        except Exception as e:
-            logger.exception("Выбор файла: %s", e)
-            callback(None)
+            try:
+                activity.unbind(onActivityResult=on_result)
+            except Exception:
+                pass
+            PICKING = False
+            try:
+                if resultCode != -1 or data is None:
+                    callback(None)
+                    return
+                uri = data.getData()
+                if uri is None:
+                    callback(None)
+                    return
+                callback(_copy_uri(uri))
+            except Exception as e:
+                _save_error("Выбор файла", e)
+                callback(None)
 
-    activity.bind(onActivityResult=on_result)
-    i = Intent(Intent.ACTION_OPEN_DOCUMENT)
-    i.addCategory(Intent.CATEGORY_OPENABLE)
-    i.setType(mime)
-    act.startActivityForResult(i, REQ_PICK)
-
+        activity.bind(onActivityResult=on_result)
+        PICKING = True
+        i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.setType(mime)
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        act.startActivityForResult(i, REQ_PICK)
+    except Exception as e:
+        PICKING = False
+        _save_error("Открытие выбора файла", e)
+        callback(None)
+        
 
 def _copy_uri(uri):
     from jnius import autoclass
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
     resolver = PythonActivity.mActivity.getContentResolver()
+
     name = "receipt.bin"
+    cur = None
     try:
         cur = resolver.query(uri, None, None, None, None)
-        if cur and cur.moveToFirst():
+        if cur is not None and cur.moveToFirst():
             idx = cur.getColumnIndex("_display_name")
             if idx >= 0:
                 name = cur.getString(idx) or name
-        if cur:
-            cur.close()
     except Exception:
         pass
-    dst = os.path.join(data_dir(), "incoming")
-    os.makedirs(dst, exist_ok=True)
-    path = os.path.join(dst, name)
-    pfd = resolver.openFileDescriptor(uri, "r")
-    fd = pfd.detachFd()
-    with os.fdopen(fd, "rb") as f, open(path, "wb") as out:
-        shutil.copyfileobj(f, out)
-    return path
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        except Exception:
+            pass
 
+    name = os.path.basename(str(name).replace("\\", "/")) or "receipt.bin"
+    dst_dir = os.path.join(data_dir(), "incoming")
+    os.makedirs(dst_dir, exist_ok=True)
+    path = os.path.join(dst_dir, name)
+
+    pfd = resolver.openFileDescriptor(uri, "r")
+    if pfd is None:
+        raise RuntimeError("Android не дал доступ к выбранному файлу")
+    src = os.fdopen(pfd.detachFd(), "rb")
+    try:
+        with open(path, "wb") as out:
+            shutil.copyfileobj(src, out, 262144)
+    finally:
+        try:
+            src.close()
+        except Exception:
+            pass
+    return path
+    
 
 # ---------- OCR ----------
 def ocr_image_file(path, lang="rus"):
@@ -152,10 +187,16 @@ def ocr_image_file(path, lang="rus"):
 
 def ocr_bitmap(bmp, lang="rus"):
     from jnius import autoclass
-    TessBaseAPI = autoclass("com.googlecode.tesseract.android.TessBaseAPI")
+    try:
+        TessBaseAPI = autoclass("com.googlecode.tesseract.android.TessBaseAPI")
+    except Exception as e:
+        raise RuntimeError("В APK нет библиотеки Tesseract (tesseract4android): %s" % e)
+    td = ensure_tessdata()
+    if not os.path.isfile(os.path.join(td, lang + ".traineddata")):
+        raise RuntimeError("Нет файла %s.traineddata в %s" % (lang, td))
     api = TessBaseAPI()
     if not api.init(data_dir(), lang):
-        raise RuntimeError("Tesseract: нет %s.traineddata в %s/tessdata" % (lang, data_dir()))
+        raise RuntimeError("Tesseract не инициализирован (язык %s)" % lang)
     try:
         api.setImage(bmp)
         return api.getUTF8Text() or ""
@@ -166,8 +207,8 @@ def ocr_bitmap(bmp, lang="rus"):
             pass
 
 
-def render_pdf_bitmaps(path, dpi=200, max_pages=10):
-    """Рендер страниц PDF средствами Android (замена poppler)."""
+def iter_pdf_bitmaps(path, dpi=170, max_pages=8, max_pixels=12_000_000):
+    """Отдаёт страницы PDF по одной и сразу освобождает память."""
     from jnius import autoclass
     File = autoclass("java.io.File")
     ParcelFileDescriptor = autoclass("android.os.ParcelFileDescriptor")
@@ -178,26 +219,42 @@ def render_pdf_bitmaps(path, dpi=200, max_pages=10):
 
     pfd = ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
     renderer = PdfRenderer(pfd)
-    out = []
     try:
         for i in range(min(renderer.getPageCount(), max_pages)):
             page = renderer.openPage(i)
+            bmp = None
             try:
-                scale = dpi / 72.0
-                scale = min(scale, 2000.0 / max(1, page.getWidth()),
-                            8000.0 / max(1, page.getHeight()))
-                w = max(1, int(page.getWidth() * scale))
-                h = max(1, int(page.getHeight() * scale))
+                w_pt = max(1, page.getWidth())
+                h_pt = max(1, page.getHeight())
+                scale = min(dpi / 72.0, 2200.0 / w_pt, 9000.0 / h_pt)
+                while (w_pt * scale) * (h_pt * scale) > max_pixels and scale > 0.2:
+                    scale *= 0.8
+                w = max(1, int(w_pt * scale))
+                h = max(1, int(h_pt * scale))
                 bmp = Bitmap.createBitmap(w, h, Config.ARGB_8888)
                 bmp.eraseColor(-1)
                 page.render(bmp, None, None, Page.RENDER_MODE_FOR_DISPLAY)
-                out.append(bmp)
+                yield bmp
             finally:
-                page.close()
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                if bmp is not None:
+                    try:
+                        bmp.recycle()
+                    except Exception:
+                        pass
     finally:
-        renderer.close()
-        pfd.close()
-    return out
+        try:
+            renderer.close()
+        except Exception:
+            pass
+        try:
+            pfd.close()
+        except Exception:
+            pass
+
 
 
 # ---------- экспорт в «Загрузки» ----------
