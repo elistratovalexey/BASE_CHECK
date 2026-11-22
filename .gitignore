@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 
 version_info.txt
+android/.build_number
+android/signing.env
+android/basecheck.keystore
 
 # C extensions
 *.so

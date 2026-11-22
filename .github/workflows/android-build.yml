@@ -88,23 +88,17 @@ jobs:
       - name: Prepare core and tessdata
         run: bash android/prepare.sh
 
-      - name: Version code
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BASE_CHECK-android-${{ steps.ver.outputs.version }}
+          path: android/bin/*.apk
+
+      - name: Auto version
+        id: ver
         shell: bash
-        run: |
-          python - <<'PYEOF'
-          import os, re, pathlib
-          cfg = pathlib.Path("config.py").read_text(encoding="utf-8")
-          ver = re.search(r'APP_VERSION\s*=\s*[\'"]([^\'"]+)[\'"]', cfg).group(1)
-          a, b, c = (ver.split(".") + ["0", "0"])[:3]
-          run = int(os.environ.get("GITHUB_RUN_NUMBER", "1"))
-          code = int(a) * 10000000 + int(b) * 100000 + int(c) * 1000 + run % 1000
-          p = pathlib.Path("android/buildozer.spec")
-          s = p.read_text(encoding="utf-8")
-          s = re.sub(r'(?m)^android\.numeric_version\s*=.*$',
-                     f'android.numeric_version = {code}', s)
-          p.write_text(s, encoding="utf-8")
-          print(f"versionName={ver}  versionCode={code}")
-          PYEOF
+        run: python tools/set_version.py
 
       - name: Build APK
         shell: bash
