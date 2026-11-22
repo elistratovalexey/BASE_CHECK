@@ -7,6 +7,22 @@ import shutil
 logger = logging.getLogger(__name__)
 IS_ANDROID = "ANDROID_PRIVATE" in os.environ
 REQ_PICK = 4711
+PICKING = False
+
+
+def _save_error(title, exc):
+    import traceback
+    txt = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logger.error("%s: %s\n%s", title, exc, txt)
+    try:
+        with open(os.path.join(data_dir(), "last_error.txt"), "w", encoding="utf-8") as f:
+            f.write(txt)
+    except Exception:
+        pass
+    try:
+        toast(f"{title}: {exc}")
+    except Exception:
+        pass
 
 
 def data_dir():
