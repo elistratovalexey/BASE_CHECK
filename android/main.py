@@ -737,6 +737,17 @@ class BaseCheckApp(App):
         pa.request_perms()
         pa.ensure_tessdata()
         db.init_db()
+        
+        def _hook(et, ev, tb):
+            import traceback
+            txt = "".join(traceback.format_exception(et, ev, tb))
+            log.error("Необработанное исключение:\n%s", txt)
+            try:
+                with open(os.path.join(pa.data_dir(), "last_error.txt"), "w", encoding="utf-8") as f:
+                    f.write(txt)
+            except Exception:
+                pass
+        sys.excepthook = _hook
         # OCR на Android — через tesseract4android вместо CLI
         if pa.IS_ANDROID:
             ocr_service._ocr_image = lambda img: pa.ocr_bitmap(img)
