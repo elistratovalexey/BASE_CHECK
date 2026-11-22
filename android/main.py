@@ -561,18 +561,29 @@ class ScanScreen(Base):
         sv.add_widget(self.txt)
         self.root_box.add_widget(sv)
         g = GridLayout(cols=2, size_hint_y=None, height=dp(100), spacing=dp(4))
-        g.add_widget(btn("Выбрать PDF", lambda: pa.pick_file(self.on_file, "application/pdf")))
-        g.add_widget(btn("Выбрать фото", lambda: pa.pick_file(self.on_file, "image/*")))
+        g.add_widget(btn("Выбрать PDF", lambda: self.pick("application/pdf")))
+        g.add_widget(btn("Выбрать фото", lambda: self.pick("image/*")))
         g.add_widget(btn("Сохранить чек", self.save))
         g.add_widget(btn("Отмена", lambda: setattr(self.manager, "current", "receipts")))
         self.root_box.add_widget(g)
+    
+        def pick(self, mime):
+        self.status.text = "Открываю выбор файла…"
+        pa.pick_file(self.on_file, mime)
 
     def on_file(self, path):
         if not path:
-            self.status.text = "Файл не выбран"
+            err = getattr(pa, "LAST_PICK_ERROR", "")
+            self.status.text = "Файл не выбран" + (" — " + err[:60] if err else "")
+            if err:
+                info("Выбор файла не открылся",
+                     err + "\n\nПодробный лог: pick_debug.txt в каталоге данных приложения "
+                           "(см. «Облако → Диагностика»).")
             return
         self.status.text = "Распознавание…"
+        # ... дальше существующий код с work()/done() без изменений
 
+ 
         def work():
             texts = []
             if path.lower().endswith(".pdf"):

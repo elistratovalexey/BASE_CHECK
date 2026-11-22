@@ -8,6 +8,28 @@ logger = logging.getLogger(__name__)
 IS_ANDROID = "ANDROID_PRIVATE" in os.environ
 REQ_PICK = 4711
 PICKING = False
+LAST_PICK_ERROR = ""
+
+
+def _log_pick(msg):
+    logger.info("pick_file: %s", msg)
+    try:
+        with open(os.path.join(data_dir(), "pick_debug.txt"), "a", encoding="utf-8") as f:
+            f.write(str(msg) + "\n")
+    except Exception:
+        pass
+
+
+def _ui(fn):
+    """Выполнить fn в потоке Kivy (а не в потоке Android/фоне)."""
+    try:
+        from kivy.clock import Clock
+        Clock.schedule_once(lambda dt: fn(), 0)
+    except Exception:
+        try:
+            fn()
+        except Exception:
+            pass
 
 
 def _save_error(title, exc):
@@ -75,8 +97,11 @@ def request_perms():
 
 # ---------- выбор файла ----------
 def pick_file(callback, mime="*/*"):
-    """Системный выбор файла; callback(local_path или None). Никогда не бросает исключение."""
-    global PICKING
+    """Системный выбор файла. callback(local_path или None). Никогда не бросает."""
+    global PICKING, LAST_PICK_ERROR
+    LAST_PICK_ERROR = ""
+    _log_pick("=== старт, mime=%s, IS_ANDROID=%s ===" % (mime, IS_ANDROID))
+
     if not IS_ANDROID:
         try:
             import tkinter as tk
@@ -89,46 +114,98 @@ def pick_file(callback, mime="*/*"):
             callback(None)
         return
 
+    def fail(msg):
+        global PICKING, LAST_PICK_ERROR
+        PICKING = False
+        LAST_PICK_ERROR = str(msg)
+        _log_pick("FAIL: " + str(msg))
+        _ui(lambda: callback(None))
+
     try:
         from jnius import autoclass
         from android import activity
+        from android.runnable import run_on_ui_thread
+    except Exception as e:
+        fail("Нет модулей Android (jnius/activity/runnable): %s" % e)
+        return
+
+    try:
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
         Intent = autoclass("android.content.Intent")
         act = PythonActivity.mActivity
-
-        def on_result(requestCode, resultCode, data):
-            global PICKING
-            if requestCode != REQ_PICK:
-                return
-            try:
-                activity.unbind(onActivityResult=on_result)
-            except Exception:
-                pass
-            PICKING = False
-            try:
-                if resultCode != -1 or data is None:
-                    callback(None)
-                    return
-                uri = data.getData()
-                if uri is None:
-                    callback(None)
-                    return
-                callback(_copy_uri(uri))
-            except Exception as e:
-                _save_error("Выбор файла", e)
-                callback(None)
-
-        activity.bind(onActivityResult=on_result)
-        PICKING = True
-        i = Intent(Intent.ACTION_OPEN_DOCUMENT)
-        i.addCategory(Intent.CATEGORY_OPENABLE)
-        i.setType(mime)
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        act.startActivityForResult(i, REQ_PICK)
+        if act is None:
+            fail("Activity не готова (mActivity is None)")
+            return
+        _log_pick("activity OK")
     except Exception as e:
+        fail("JNI: %s" % e)
+        return
+
+    def on_result(requestCode, resultCode, data):
+        global PICKING
+        if requestCode != REQ_PICK:
+            return
+        _log_pick("on_result: code=%s" % resultCode)
+        try:
+            activity.unbind(onActivityResult=on_result)
+        except Exception:
+            pass
         PICKING = False
-        _save_error("Открытие выбора файла", e)
-        callback(None)
+        try:
+            if resultCode != -1 or data is None:
+                _ui(lambda: callback(None))
+                return
+            uri = data.getData()
+            if uri is None:
+                _ui(lambda: callback(None))
+                return
+
+            def work():
+                try:
+                    p = _copy_uri(uri)
+                    _log_pick("скопирован: " + p)
+                    _ui(lambda: callback(p))
+                except Exception as e:
+                    _save_error("Копирование файла", e)
+                    fail(e)
+            import threading
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as e:
+            _save_error("Обработка выбора", e)
+            fail(e)
+
+    try:
+        activity.bind(onActivityResult=on_result)
+        _log_pick("bind OK")
+    except Exception as e:
+        fail("activity.bind: %s" % e)
+        return
+
+    PICKING = True
+
+    @run_on_ui_thread
+    def _start():
+        try:
+            i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            i.addCategory(Intent.CATEGORY_OPENABLE)
+            i.setType(mime)
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            act.startActivityForResult(i, REQ_PICK)
+            _log_pick("OPEN_DOCUMENT отправлен")
+        except Exception as e1:
+            _log_pick("OPEN_DOCUMENT не сработал: %s" % e1)
+            try:
+                j = Intent(Intent.ACTION_GET_CONTENT)
+                j.addCategory(Intent.CATEGORY_OPENABLE)
+                j.setType(mime)
+                j.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                act.startActivityForResult(Intent.createChooser(j, "Выберите файл"), REQ_PICK)
+                _log_pick("GET_CONTENT отправлен")
+            except Exception as e2:
+                _save_error("Запуск выбора файла", e2)
+                fail(e2)
+
+    _start()
         
 
 def _copy_uri(uri):
@@ -320,7 +397,15 @@ def storage_diagnostics():
             lines.append(f"OK write: {p}")
         except Exception as e:
             lines.append(f"FAIL write: {p} -> {e}")
-
+    for fname in ("pick_debug.txt", "last_error.txt"):
+        p = os.path.join(data_dir(), fname)
+        if os.path.isfile(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    lines.append(f"\n=== {fname} ===\n" + f.read()[-1500:])
+            except Exception:
+                pass
+                
     return "\n".join(lines)
 
 def toast(text):
@@ -329,10 +414,19 @@ def toast(text):
         return
     try:
         from jnius import autoclass, cast
+        from android.runnable import run_on_ui_thread
         PythonActivity = autoclass("org.kivy.android.PythonActivity")
         Toast = autoclass("android.widget.Toast")
         String = autoclass("java.lang.String")
         ctx = PythonActivity.mActivity
-        Toast.makeText(ctx, cast("java.lang.CharSequence", String(text)), Toast.LENGTH_LONG).show()
-    except Exception:
-        logger.info("toast: %s", text)
+
+        @run_on_ui_thread
+        def _show():
+            try:
+                Toast.makeText(ctx, cast("java.lang.CharSequence", String(text)),
+                               Toast.LENGTH_LONG).show()
+            except Exception as e:
+                logger.info("toast не показан: %s (%s)", text, e)
+        _show()
+    except Exception as e:
+        logger.info("toast: %s (%s)", text, e)
