@@ -9,6 +9,7 @@ IS_ANDROID = "ANDROID_PRIVATE" in os.environ
 REQ_PICK = 4711
 PICKING = False
 LAST_PICK_ERROR = ""
+_PICK_HOLDERS = []          # держим ссылки на Java-слушатели, чтобы их не собрал GC
 
 
 def _log_pick(msg):
@@ -136,6 +137,7 @@ def pick_file(callback, mime="*/*"):
         return
 
     holder = {}
+    _PICK_HOLDERS.append(holder)        # ссылка живёт до конца процесса
 
     def handle(requestCode, resultCode, data):
         global PICKING
@@ -202,7 +204,7 @@ def pick_file(callback, mime="*/*"):
         except Exception as e:
             _log_pick("android.activity недоступен: %s" % e)
 
-    # --- способ 3: без слушателя — опрос результата через onResume ---
+    # --- способ 3: без слушателя ---
     if not registered:
         _log_pick("работаем без слушателя (режим опроса)")
         holder["poll"] = True
@@ -232,7 +234,7 @@ def pick_file(callback, mime="*/*"):
                 fail(e2)
 
     _start()
-        
+
 
 def _copy_uri(uri):
     from jnius import autoclass
@@ -274,7 +276,7 @@ def _copy_uri(uri):
         except Exception:
             pass
     return path
-    
+
 
 # ---------- OCR ----------
 def ocr_image_file(path, lang="rus"):
@@ -359,44 +361,68 @@ def iter_pdf_bitmaps(path, dpi=170, max_pages=8, max_pixels=12_000_000):
             pass
 
 
-
 # ---------- экспорт в «Загрузки» ----------
 def save_to_downloads(filename, data,
                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
-    """Кладёт файл в Downloads (MediaStore на API 29+), возвращает путь/URI."""
+    """Сохраняет файл в «Загрузки». Файл не теряется даже при отказе MediaStore."""
+    # локальная копия всегда — чтобы результат не пропал при любой ошибке
+    local = os.path.join(exports_dir(), filename)
+    with open(local, "wb") as f:
+        f.write(data)
+
     if not IS_ANDROID:
-        p = os.path.join(exports_dir(), filename)
-        with open(p, "wb") as f:
-            f.write(data)
-        return p
-    from jnius import autoclass, cast
+        return local
+
+    from jnius import autoclass
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
     ctx = PythonActivity.mActivity
     sdk = autoclass("android.os.Build$VERSION").SDK_INT
+
     if sdk >= 29:
-        MediaStore = autoclass("android.provider.MediaStore")
-        ContentValues = autoclass("android.content.ContentValues")
-        resolver = ctx.getContentResolver()
-        vals = ContentValues()
-        vals.put("_display_name", filename)
-        vals.put("mime_type", mime)
-        vals.put("relative_path", "Download/")
-        uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, vals)
-        if uri is None:
-            raise RuntimeError("MediaStore не создал файл")
-        pfd = resolver.openFileDescriptor(uri, "w")
-        fd = pfd.detachFd()
-        with os.fdopen(fd, "wb") as f:
+        try:
+            # ВЛОЖЕННЫЙ класс грузится через $, а не через точку
+            Downloads = autoclass("android.provider.MediaStore$Downloads")
+            ContentValues = autoclass("android.content.ContentValues")
+            resolver = ctx.getContentResolver()
+            vals = ContentValues()
+            vals.put("_display_name", filename)
+            vals.put("mime_type", mime)
+            vals.put("relative_path", "Download/")
+            uri = resolver.insert(Downloads.EXTERNAL_CONTENT_URI, vals)
+            if uri is None:
+                raise RuntimeError("MediaStore вернул пустой URI")
+            pfd = resolver.openFileDescriptor(uri, "w")
+            if pfd is None:
+                raise RuntimeError("Не удалось открыть файл на запись")
+            f = os.fdopen(pfd.detachFd(), "wb")
+            try:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+            return "Загрузки/" + filename
+        except Exception as e:
+            logger.warning("MediaStore не сработал (%s) — файл в каталоге приложения", e)
+            return local
+
+    # Android 9 и ниже
+    try:
+        Environment = autoclass("android.os.Environment")
+        d = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        d.mkdirs()
+        p = os.path.join(d.getAbsolutePath(), filename)
+        with open(p, "wb") as f:
             f.write(data)
-        return "Downloads/" + filename
-    Environment = autoclass("android.os.Environment")
-    d = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-    d.mkdirs()
-    p = os.path.join(d.getAbsolutePath(), filename)
-    with open(p, "wb") as f:
-        f.write(data)
-    return p
-                          
+        return p
+    except Exception as e:
+        logger.warning("Запись в Downloads не удалась: %s", e)
+        return local
+
+
 def storage_diagnostics():
     import paths
 
@@ -411,9 +437,10 @@ def storage_diagnostics():
         f"user_data_dir={udd}",
         f"db_path={dbp}",
         f"backups={bkp}",
+        f"exports={exports_dir()}",
     ]
 
-    for p in (root, udd, bkp):
+    for p in (root, udd, bkp, exports_dir()):
         try:
             os.makedirs(p, exist_ok=True)
             test = os.path.join(p, ".write_test")
@@ -423,6 +450,7 @@ def storage_diagnostics():
             lines.append(f"OK write: {p}")
         except Exception as e:
             lines.append(f"FAIL write: {p} -> {e}")
+
     for fname in ("pick_debug.txt", "last_error.txt"):
         p = os.path.join(data_dir(), fname)
         if os.path.isfile(p):
@@ -431,8 +459,9 @@ def storage_diagnostics():
                     lines.append(f"\n=== {fname} ===\n" + f.read()[-1500:])
             except Exception:
                 pass
-                
+
     return "\n".join(lines)
+
 
 def toast(text):
     if not IS_ANDROID:
